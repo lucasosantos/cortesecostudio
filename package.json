@@ -1,6 +1,6 @@
 {
   "name": "corteseco-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Editor de vídeo multitrack em HTML/CSS/JS",
   "main": "electron/main.cjs",
   "type": "module",
@@ -14,7 +14,8 @@
     "dist": "vite build && electron-builder",
     "dist:linux": "vite build && electron-builder --linux",
     "dist:appimage": "vite build && electron-builder --linux AppImage",
-    "dist:win": "vite build && electron-builder --win"
+    "dist:win": "vite build && electron-builder --win",
+    "dist:all": "bash scripts/build-all.sh"
   },
   "build": {
     "appId": "com.corteseco.studio",
