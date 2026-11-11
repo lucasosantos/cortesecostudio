@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: data: ws: http://localhost:*; font-src 'self' data:"
+    />
+    <title>CorteSeco Studio</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">CorteSeco<span> Studio</span></div>
+      <div class="group">
+        <button data-action="new" data-icon="new" title="Novo projeto">Novo</button>
+        <button data-action="open" data-icon="open" title="Abrir projeto (Ctrl+O)">Abrir</button>
+        <button data-action="save" data-icon="save" title="Salvar projeto (Ctrl+S)">Salvar</button>
+      </div>
+      <div class="group">
+        <button data-action="undo" data-icon="undo" class="icon" title="Desfazer (Ctrl+Z)" aria-label="Desfazer"></button>
+        <button data-action="redo" data-icon="redo" class="icon" title="Refazer (Ctrl+Shift+Z)" aria-label="Refazer"></button>
+      </div>
+      <div class="group">
+        <button data-action="import" data-icon="media" title="Importar vídeo, áudio ou imagem">Mídia</button>
+        <button data-action="add-text" data-icon="text" class="edit-only" title="Adicionar texto no playhead">Texto</button>
+        <button data-action="new-comp" data-icon="comp" title="Nova composição de motion design">Composição</button>
+      </div>
+      <div class="group mode-tabs" title="Alternar entre a timeline do vídeo e o workspace de motion design">
+        <button data-action="mode-edit" data-icon="edit" id="mode-edit" class="active">Edição</button>
+        <button data-action="mode-motion" data-icon="motion" id="mode-motion">Motion</button>
+      </div>
+      <div class="spacer"></div>
+      <label class="layout-pick" title="Layout da interface">
+        <select id="layout-select" class="layout-select">
+          <option value="classic">Layout: Padrão</option>
+          <option value="vertical-right">Layout: Vertical (preview à direita)</option>
+          <option value="vertical-left">Layout: Vertical (preview à esquerda)</option>
+          <option value="timeline">Layout: Timeline grande</option>
+        </select>
+      </label>
+      <button class="settings-chip" data-action="settings" data-icon="settings" title="Dimensões e FPS do projeto"><span id="settings-label">1920×1080 · 30fps</span></button>
+      <button class="primary" data-action="export" data-icon="export">Exportar</button>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel" id="media-panel"></aside>
+
+      <section class="panel preview-panel">
+        <div class="pv-resizer" id="pv-resizer" title="Arraste para redimensionar o preview"></div>
+        <div class="preview-stage" id="preview-stage">
+          <div class="preview-frame" id="preview-frame">
+            <canvas id="preview-canvas"></canvas>
+            <div id="preview-overlay"></div>
+          </div>
+        </div>
+        <div class="transport">
+          <button data-action="to-start" data-icon="toStart" class="icon" title="Início (Home)" aria-label="Início"></button>
+          <button data-action="prev-frame" data-icon="prev" class="icon" title="Frame anterior (←)" aria-label="Frame anterior"></button>
+          <button data-action="play" data-icon="play" id="play-btn" class="play" title="Play/Pausa (Espaço)" aria-label="Play/Pausa"></button>
+          <button data-action="next-frame" data-icon="next" class="icon" title="Próximo frame (→)" aria-label="Próximo frame"></button>
+          <button data-action="to-end" data-icon="toEnd" class="icon" title="Fim (End)" aria-label="Fim"></button>
+          <span class="timecode"><span id="tc-current">00:00.00</span> / <span id="tc-total">00:00.00</span></span>
+        </div>
+      </section>
+
+      <aside class="panel" id="inspector"></aside>
+
+      <!-- workspace de motion design: ocupa o lugar do preview, do inspector e da timeline -->
+      <section class="panel motion-stage-panel motion-only" id="motion-stage-panel"></section>
+      <aside class="panel motion-only" id="motion-inspector"></aside>
+    </main>
+
+    <section class="timeline" id="timeline"></section>
+    <section class="timeline motion-only" id="motion-timeline"></section>
+
+    <div id="modal-root"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

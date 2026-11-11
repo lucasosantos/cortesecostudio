@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CorteSeco Studio — editor de vídeo com motion design</title>
+  <meta name="description" content="Editor de vídeo multitrack com módulo de motion design. Roda no desktop (Linux e Windows) e direto no navegador." />
+  <meta property="og:title" content="CorteSeco Studio" />
+  <meta property="og:description" content="Editor de vídeo multitrack com módulo de motion design. Desktop e navegador." />
+  <meta property="og:image" content="motion.png" />
+  <link rel="icon" href="icon.png" />
+  <style>
+    :root {
+      --bg: #121317;
+      --panel: #1b1d23;
+      --panel-2: #23262e;
+      --line: #30343e;
+      --text: #e6e8ee;
+      --muted: #9aa0b1;
+      --accent: #4f8cff;
+      --accent-2: #2f6fe8;
+      --kf: #ffd24a;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-size: 16px; line-height: 1.6;
+    }
+    a { color: var(--accent); }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+    header.top { border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 10; }
+    header.top .wrap { display: flex; align-items: center; gap: 18px; height: 56px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; letter-spacing: .3px; color: var(--text); text-decoration: none; }
+    .brand img { width: 28px; height: 28px; border-radius: 6px; }
+    .brand span { color: var(--accent); }
+    nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+    nav a { color: var(--muted); text-decoration: none; }
+    nav a:hover { color: var(--text); }
+
+    .hero { padding: 72px 0 40px; text-align: center; }
+    .hero h1 { font-size: clamp(32px, 5.4vw, 54px); line-height: 1.12; margin: 0 0 18px; letter-spacing: -.5px; text-wrap: balance; }
+    .hero h1 em { font-style: normal; color: var(--accent); }
+    .hero p { color: var(--muted); font-size: 18px; max-width: 640px; margin: 0 auto 28px; text-wrap: pretty; }
+    .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+    .btn {
+      display: inline-block; padding: 12px 22px; border-radius: 8px; font-weight: 600; text-decoration: none;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    }
+    .btn:hover { border-color: #4a5060; }
+    .btn.primary { background: var(--accent-2); border-color: var(--accent); }
+    .btn.primary:hover { background: var(--accent); }
+    .cta-note { color: var(--muted); font-size: 13px; margin-top: 14px; }
+
+    .shot { margin: 36px auto 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 80px rgba(0, 0, 0, .55); }
+    .shot img { display: block; width: 100%; height: auto; }
+
+    section { padding: 64px 0; }
+    section + section { border-top: 1px solid var(--line); }
+    h2 { font-size: 28px; margin: 0 0 8px; letter-spacing: -.2px; }
+    .lead { color: var(--muted); margin: 0 0 32px; max-width: 680px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+    .card h3 { margin: 0 0 6px; font-size: 16px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+    .card .dot { display: inline-block; width: 9px; height: 9px; background: var(--kf); transform: rotate(45deg); margin-right: 10px; vertical-align: 1px; }
+
+    .steps { counter-reset: step; display: grid; gap: 14px; padding: 0; margin: 0; list-style: none; max-width: 720px; }
+    .steps li { counter-increment: step; display: grid; grid-template-columns: 34px 1fr; gap: 14px; align-items: start; }
+    .steps li::before {
+      content: counter(step); width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+      background: #1f2a42; border: 1px solid var(--accent); font-weight: 700; font-size: 14px;
+    }
+    .steps b { display: block; }
+    .steps span { color: var(--muted); font-size: 14.5px; }
+
+    .keys { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 14px; margin-top: 28px; }
+    kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 7px; font: 12px ui-monospace, monospace; color: var(--text); }
+
+    pre { background: #0d0e11; border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow-x: auto; font: 13.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
+    pre .c { color: #6b7180; }
+
+    footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 13.5px; }
+    footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+
+    @media (max-width: 600px) {
+      nav { display: none; }
+      .hero { padding-top: 48px; }
+      section { padding: 44px 0; }
+    }
+  </style>
+</head>
+<body>
+  <!--
+    Antes de publicar, troque USUARIO/REPOSITORIO pelo endereço real do projeto no GitHub
+    (aparece no link "Código-fonte" e no botão de download).
+    O botão "Abrir no navegador" aponta para ./app/, gerado por: npm run build:pages
+  -->
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="#"><img src="icon.png" alt="" />CorteSeco<span>Studio</span></a>
+      <nav>
+        <a href="#recursos">Recursos</a>
+        <a href="#motion">Motion design</a>
+        <a href="#instalar">Instalar</a>
+        <a href="https://github.com/USUARIO/REPOSITORIO">Código-fonte</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap hero">
+      <h1>Edite o vídeo e anime os gráficos <em>no mesmo lugar</em></h1>
+      <p>CorteSeco Studio é um editor de vídeo multitrack com um módulo de motion design embutido. Roda como aplicativo no desktop e direto no navegador.</p>
+      <div class="cta">
+        <a class="btn primary" href="app/">Abrir no navegador</a>
+        <a class="btn" href="https://github.com/USUARIO/REPOSITORIO/releases/latest">Baixar para desktop</a>
+      </div>
+      <div class="cta-note">A versão de navegador precisa do Chrome ou Edge. Seus arquivos ficam no seu computador: nada é enviado para servidor.</div>
+      <div class="shot"><img src="motion.png" width="1600" height="950" alt="Workspace de motion design do CorteSeco Studio: palco com formas vetoriais, timeline de camadas com keyframes e inspector de propriedades" /></div>
+    </div>
+
+    <section id="recursos">
+      <div class="wrap">
+        <h2>Editor de vídeo</h2>
+        <p class="lead">O básico bem resolvido, sem conta, sem nuvem e sem marca d'água.</p>
+        <div class="grid">
+          <div class="card"><h3>Tracks ilimitadas</h3><p>Vídeo, áudio, imagem e texto em quantas camadas precisar. Oculte, silencie, trave e reordene.</p></div>
+          <div class="card"><h3>Corte rápido</h3><p>Arraste, apare e divida clipes. O modo inserção encaixa uma cena empurrando as demais.</p></div>
+          <div class="card"><h3>Keyframes</h3><p>Anime posição, tamanho, rotação, opacidade e volume de qualquer clipe ao longo do tempo.</p></div>
+          <div class="card"><h3>Transições e entradas</h3><p>Combinar, deslizar e flash entre cenas, além de animações de entrada e saída por clipe.</p></div>
+          <div class="card"><h3>Qualquer formato de tela</h3><p>16:9, 9:16, 1:1, 4:5 ou 4K, em pixels e FPS que você define.</p></div>
+          <div class="card"><h3>Exportação MP4 e MP3</h3><p>Vídeo em H.264 com áudio AAC, ou só o áudio. Projetos salvos em um arquivo JSON.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="motion">
+      <div class="wrap">
+        <h2>Motion design</h2>
+        <p class="lead">Composições com camadas próprias, no estilo dos programas de animação. Prontas, entram na timeline como um clipe transparente por cima do vídeo.</p>
+        <div class="grid">
+          <div class="card"><h3><span class="dot"></span>Formas e texto</h3><p>Retângulo, elipse, polígono, estrela, linha, texto e imagens. Cor, traço e arredondamento animáveis.</p></div>
+          <div class="card"><h3><span class="dot"></span>Curvas de aceleração</h3><p>Cada keyframe tem sua curva: predefinições como quicar e elástico, ou uma bezier ajustada à mão.</p></div>
+          <div class="card"><h3><span class="dot"></span>Importar SVG</h3><p>Traga logos e ícones: cada forma vira uma camada e cada grupo vira um pai para animar em conjunto.</p></div>
+          <div class="card"><h3><span class="dot"></span>Caneta e morph</h3><p>Desenhe caminhos livres e transforme uma forma em outra movendo os pontos entre keyframes.</p></div>
+          <div class="card"><h3><span class="dot"></span>Traço que se desenha</h3><p>Apare o início e o fim do traço para fazer linhas e contornos surgirem sozinhos.</p></div>
+          <div class="card"><h3><span class="dot"></span>Hierarquia e máscaras</h3><p>Ligue camadas a um pai para mover tudo junto e use qualquer camada como máscara de outra.</p></div>
+        </div>
+
+        <h2 style="margin-top:56px">Um título animado em quatro passos</h2>
+        <p class="lead">Do zero até o vídeo exportado.</p>
+        <ol class="steps">
+          <li><div><b>Crie uma composição</b><span>Clique em "Composição" na barra superior. Ela nasce do tamanho do projeto.</span></div></li>
+          <li><div><b>Desenhe</b><span>Use as ferramentas acima do palco para criar a barra e o texto do título.</span></div></li>
+          <li><div><b>Anime</b><span>Clique em ◆ ao lado de uma propriedade, mova o playhead e mude o valor. Ou aplique uma animação pronta de entrada.</span></div></li>
+          <li><div><b>Use no vídeo</b><span>"Usar na timeline" coloca a composição sobre o vídeo. Exporte em MP4.</span></div></li>
+        </ol>
+        <div class="keys">
+          <span><kbd>Espaço</kbd> play</span>
+          <span><kbd>V</kbd> selecionar</span>
+          <span><kbd>R</kbd> retângulo</span>
+          <span><kbd>O</kbd> elipse</span>
+          <span><kbd>T</kbd> texto</span>
+          <span><kbd>P</kbd> caneta</span>
+          <span><kbd>Y</kbd> âncora</span>
+          <span><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicar</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="instalar">
+      <div class="wrap">
+        <h2>Instalar</h2>
+        <p class="lead">Baixe o instalador na página de versões, ou rode a partir do código-fonte. É preciso ter o Node.js instalado.</p>
+        <pre><span class="c"># baixar o código e instalar as dependências</span>
+git clone https://github.com/USUARIO/REPOSITORIO.git
+cd REPOSITORIO
+npm install
+
+npm run dev            <span class="c"># abre o app desktop com recarregamento</span>
+npm run dev:web        <span class="c"># versão de navegador (Chrome/Edge)</span>
+npm run dist:appimage  <span class="c"># gera o AppImage para Linux em release/</span>
+npm run dist:win       <span class="c"># gera o instalador .exe (rodar no Windows)</span></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>CorteSeco Studio</span>
+      <span>Feito com HTML, CSS e JavaScript · codificação por <a href="https://mediabunny.dev/">Mediabunny</a></span>
+    </div>
+  </footer>
+</body>
+</html>

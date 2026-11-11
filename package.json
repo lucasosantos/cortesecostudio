@@ -1,0 +1,66 @@
+{
+  "name": "corteseco-studio",
+  "version": "0.1.0",
+  "description": "Editor de vídeo multitrack em HTML/CSS/JS",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n vite,app \"vite --port 5199 --strictPort\" \"wait-on http://localhost:5199 && cross-env VITE_DEV_SERVER_URL=http://localhost:5199 node scripts/electron.cjs\"",
+    "dev:web": "vite",
+    "test": "vitest run",
+    "build:web": "vite build",
+    "build:pages": "vite build --outDir docs/app --emptyOutDir",
+    "start": "vite build && node scripts/electron.cjs",
+    "dist": "vite build && electron-builder",
+    "dist:linux": "vite build && electron-builder --linux",
+    "dist:appimage": "vite build && electron-builder --linux AppImage",
+    "dist:win": "vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.corteseco.studio",
+    "productName": "CorteSeco Studio",
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "maintainer": "Lucas Oliveira <lucasoliveira.dsr@gmail.com>",
+      "icon": "build/icon.png"
+    },
+    "appImage": {
+      "artifactName": "CorteSeco-Studio-${version}-${arch}.AppImage"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  },
+  "devDependencies": {
+    "@mediabunny/aac-encoder": "^1.61.3",
+    "@mediabunny/mp3-encoder": "^1.61.3",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "mediabunny": "^1.61.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.1.0",
+    "wait-on": "^9.5.1"
+  },
+  "author": {
+    "name": "Lucas Oliveira",
+    "email": "lucasoliveira.dsr@gmail.com"
+  },
+  "homepage": "https://example.com/corteseco-studio"
+}
