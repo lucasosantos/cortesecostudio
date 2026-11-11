@@ -1,5 +1,5 @@
 // Estado central do editor: projeto serializável + estado de UI + histórico.
-import { valueAt, KF_PROPS, setKeyframe, hasKeyframes, shiftKeyframes } from './keyframes.js';
+import { splitKeyframes, shiftKeyframes } from './keyframes.js';
 
 let idCounter = 0;
 export const uid = (p = 'id') => `${p}${Date.now().toString(36)}${(idCounter++).toString(36)}`;
@@ -26,7 +26,10 @@ export const state = {
   insertMode: false,
   autoKey: false,
   projectName: 'projeto',
+  maskEdit: null, // máscara em edição no preview: { clipId, maskId, sel }
   mode: 'edit', // 'edit' (timeline principal) | 'motion' (workspace de composição)
+  rev: 0, // sobe a cada alteração do projeto (para caches)
+  exporting: false, // durante a exportação o preview fica parado
   motion: newMotionState(),
 };
 
@@ -42,10 +45,11 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 /**
- * reason: 'project' | 'time' | 'selection' | 'zoom' | 'play' | 'media' | 'mode'
+ * reason: 'project' | 'time' | 'selection' | 'zoom' | 'play' | 'media' | 'mode' | 'extensions'
  *       | 'motion' (seleção/ferramenta/zoom do workspace de motion) | 'motion-time'
  */
 export function emit(reason = 'project') {
+  if (reason === 'project') state.rev++;
   for (const fn of listeners) fn(reason);
 }
 
@@ -53,27 +57,46 @@ export function emit(reason = 'project') {
 const undoStack = [];
 const redoStack = [];
 const MAX_HISTORY = 200;
+const MAX_HISTORY_CHARS = 20_000_000; // ~40 MB (cada caractere ocupa 2 bytes): projetos grandes guardam menos passos
+let undoChars = 0;
+/** Mantém a pilha de desfazer dentro dos limites de quantidade e de memória (sempre sobra ao menos um passo). */
+function trimHistory() {
+  while (undoStack.length > 1 && (undoStack.length > MAX_HISTORY || undoChars > MAX_HISTORY_CHARS)) undoChars -= undoStack.shift().length;
+}
+/** Quantos passos de desfazer existem e quanto ocupam (para a tela de Desempenho e os testes). */
+export const historyInfo = () => ({ steps: undoStack.length, chars: undoChars });
 
 export function checkpoint() {
-  undoStack.push(JSON.stringify(state.project));
-  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  pushHistory(JSON.stringify(state.project));
+}
+/** Registra no histórico uma fotografia (JSON) do projeto tirada antes de uma alteração. */
+export function pushHistory(snapshot) {
+  undoStack.push(snapshot);
+  undoChars += snapshot.length;
+  trimHistory();
   redoStack.length = 0;
 }
 export function undo() {
   if (!undoStack.length) return;
   redoStack.push(JSON.stringify(state.project));
-  state.project = JSON.parse(undoStack.pop());
+  const snapshot = undoStack.pop();
+  undoChars -= snapshot.length;
+  state.project = JSON.parse(snapshot);
   fixSelection();
   emit('project');
 }
 export function redo() {
   if (!redoStack.length) return;
-  undoStack.push(JSON.stringify(state.project));
+  const current = JSON.stringify(state.project);
+  undoStack.push(current);
+  undoChars += current.length;
+  trimHistory();
   state.project = JSON.parse(redoStack.pop());
   fixSelection();
   emit('project');
 }
 export function resetHistory() {
+  undoChars = 0;
   undoStack.length = 0;
   redoStack.length = 0;
 }
@@ -253,15 +276,32 @@ let measureCtx;
 export function fontString(font) {
   return `${font.italic ? 'italic ' : ''}${font.bold ? 'bold ' : ''}${font.size}px ${font.family}`;
 }
+/** Linhas do texto como são desenhadas (com a opção de maiúsculas aplicada). */
+export function textLines(item) {
+  const text = String(item.text || ' ');
+  return (item.font?.upper ? text.toLocaleUpperCase() : text).split('\n');
+}
+
+/**
+ * Margem em volta das letras: respiro, contornos e caixa de fundo.
+ * (A sombra pode passar da caixa, como a sombra de qualquer elemento.)
+ */
+export function textPad(font) {
+  return font.size * 0.2 + (font.strokeWidth || 0) + (font.stroke2Width || 0) + (font.bg ? font.bgPad || 0 : 0);
+}
+
 /** Tamanho natural (sem escala) do texto do clipe. */
 export function measureText(clip) {
   measureCtx ||= document.createElement('canvas').getContext('2d');
-  measureCtx.font = fontString(clip.font);
-  const lines = String(clip.text || ' ').split('\n');
-  const lineH = clip.font.size * 1.2;
+  const f = clip.font;
+  measureCtx.font = fontString(f);
+  measureCtx.letterSpacing = `${f.letterSpacing || 0}px`;
+  const lines = textLines(clip);
+  const lineH = f.size * (f.lineHeight || 1.2);
   let w = 0;
-  for (const l of lines) w = Math.max(w, measureCtx.measureText(l || ' ').width);
-  const pad = clip.font.size * 0.2 + (clip.font.strokeWidth || 0);
+  // o espaçamento entra depois de cada letra, inclusive da última: não conta essa sobra
+  for (const l of lines) w = Math.max(w, measureCtx.measureText(l || ' ').width - (l ? f.letterSpacing || 0 : 0));
+  const pad = textPad(f);
   return { w: Math.max(1, w + pad * 2), h: Math.max(1, lines.length * lineH + pad * 2), lineH, pad, lines };
 }
 
@@ -277,22 +317,45 @@ export function splitClip(clip, t) {
   const right = JSON.parse(JSON.stringify(clip));
   right.id = uid('c');
   delete right.transition;
-  // preserva a animação na fronteira do corte
-  for (const p of KF_PROPS) {
-    if (!hasKeyframes(clip, p)) continue;
-    const v = valueAt(clip, p, local);
-    setKeyframe(clip, p, local, v);
-    setKeyframe(right, p, local, v);
-    clip.keyframes[p] = clip.keyframes[p].filter((k) => k.t <= local + 1e-6);
-    right.keyframes[p] = right.keyframes[p].filter((k) => k.t >= local - 1e-6);
+  // preserva a animação na fronteira do corte (do clipe e dos seus efeitos e máscaras)
+  const leftParts = animatedParts(clip);
+  const rightParts = animatedParts(right);
+  leftParts.forEach((part, i) => {
+    splitKeyframes(part, rightParts[i], local);
+    shiftKeyframes(rightParts[i], -local);
+  });
+  // efeitos e máscaras da metade direita são objetos novos
+  for (const part of rightParts.slice(1)) part.id = uid(part.shape ? 'mk' : 'fx');
+  // a entrada fica com a primeira metade e a saída com a segunda (o corte não ganha animação)
+  delete clip.animOut;
+  delete right.animIn;
+  if (clip.textAnim) {
+    clip.textAnim = { ...clip.textAnim, out: null };
+    right.textAnim = { ...right.textAnim, in: null };
   }
-  shiftKeyframes(right, -local);
   right.start = t;
   right.inPoint = clip.inPoint + local;
   right.duration = clip.duration - local;
   clip.duration = local;
   state.project.clips.push(right);
   return right;
+}
+
+/** Tudo no clipe que tem keyframes próprios: o clipe, seus efeitos e suas máscaras. */
+export function animatedParts(clip) {
+  return [clip, ...(clip.effects || []), ...(clip.masks || [])];
+}
+
+/** Fotografia dos keyframes do clipe e das suas partes (para restaurar durante um arrasto). */
+export const snapshotKeyframes = (clip) => JSON.stringify(animatedParts(clip).map((part) => part.keyframes || {}));
+
+/** Restaura a fotografia e desloca tudo por dt. */
+export function restoreKeyframes(clip, snapshot, dt = 0) {
+  const list = JSON.parse(snapshot);
+  animatedParts(clip).forEach((part, i) => {
+    part.keyframes = list[i] || {};
+    if (dt) shiftKeyframes(part, dt);
+  });
 }
 
 /** Remove o clipe da sua posição fechando o buraco (ripple) na track de origem. */
@@ -339,6 +402,7 @@ export function loadProject(json) {
   if (!data || !data.project || !Array.isArray(data.project.clips)) throw new Error('Arquivo de projeto inválido');
   state.project = data.project;
   state.project.comps ||= []; // projetos salvos antes do módulo de motion
+  state.maskEdit = null;
   state.selection = null;
   state.time = 0;
   state.mode = 'edit';

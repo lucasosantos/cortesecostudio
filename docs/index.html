@@ -78,7 +78,10 @@
     .steps b { display: block; }
     .steps span { color: var(--muted); font-size: 14.5px; }
 
-    .keys { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 14px; margin-top: 28px; }
+    .keys { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 14px; }
+    .keys-title { font-size: 15px; margin: 24px 0 10px; }
+    .card kbd { font-size: 11px; padding: 0 5px; }
+    code { font: 13px ui-monospace, monospace; background: var(--panel-2); border-radius: 4px; padding: 1px 5px; }
     kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 7px; font: 12px ui-monospace, monospace; color: var(--text); }
 
     pre { background: #0d0e11; border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow-x: auto; font: 13.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
@@ -105,7 +108,10 @@
       <a class="brand" href="#"><img src="icon.png" alt="" />CorteSeco<span>Studio</span></a>
       <nav>
         <a href="#recursos">Recursos</a>
+        <a href="#efeitos">Efeitos</a>
         <a href="#motion">Motion design</a>
+        <a href="#leve">Desempenho</a>
+        <a href="#ia">IA</a>
         <a href="#instalar">Instalar</a>
         <a href="https://github.com/USUARIO/REPOSITORIO">Código-fonte</a>
       </nav>
@@ -115,7 +121,7 @@
   <main>
     <div class="wrap hero">
       <h1>Edite o vídeo e anime os gráficos <em>no mesmo lugar</em></h1>
-      <p>CorteSeco Studio é um editor de vídeo multitrack com um módulo de motion design embutido. Roda como aplicativo no desktop e direto no navegador.</p>
+      <p>CorteSeco Studio é um editor de vídeo multitrack com motion design, efeitos na GPU e texto animado letra por letra. Feito para rodar bem em computador fraco, no desktop e direto no navegador.</p>
       <div class="cta">
         <a class="btn primary" href="app/">Abrir no navegador</a>
         <a class="btn" href="https://github.com/USUARIO/REPOSITORIO/releases/latest">Baixar para desktop</a>
@@ -130,11 +136,49 @@
         <p class="lead">O básico bem resolvido, sem conta, sem nuvem e sem marca d'água.</p>
         <div class="grid">
           <div class="card"><h3>Tracks ilimitadas</h3><p>Vídeo, áudio, imagem e texto em quantas camadas precisar. Oculte, silencie, trave e reordene.</p></div>
-          <div class="card"><h3>Corte rápido</h3><p>Arraste, apare e divida clipes. O modo inserção encaixa uma cena empurrando as demais.</p></div>
+          <div class="card"><h3>Corte rápido</h3><p>Ferramenta de corte no <kbd>B</kbd>: clique no clipe e ele divide ali. <kbd>Q</kbd> e <kbd>W</kbd> apagam o que vem antes ou depois do playhead. O modo inserção fecha os buracos sozinho.</p></div>
           <div class="card"><h3>Keyframes</h3><p>Anime posição, tamanho, rotação, opacidade e volume de qualquer clipe ao longo do tempo.</p></div>
-          <div class="card"><h3>Transições e entradas</h3><p>Combinar, deslizar e flash entre cenas, além de animações de entrada e saída por clipe.</p></div>
+          <div class="card"><h3>Transições, entradas e saídas</h3><p>Entre cenas ou na chegada e saída de cada elemento: revelar, dissolver, zoom, pixels, subir e aparecer, e as que você criar.</p></div>
           <div class="card"><h3>Qualquer formato de tela</h3><p>16:9, 9:16, 1:1, 4:5 ou 4K, em pixels e FPS que você define.</p></div>
           <div class="card"><h3>Exportação MP4 e MP3</h3><p>Vídeo em H.264 com áudio AAC, ou só o áudio. Projetos salvos em um arquivo JSON.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="efeitos">
+      <div class="wrap">
+        <h2>Efeitos, máscaras e chroma key</h2>
+        <p class="lead">Processados na placa de vídeo, em clipes da timeline e em camadas do motion. Todo parâmetro aceita keyframes.</p>
+        <div class="grid">
+          <div class="card"><h3>Efeitos de imagem</h3><p>Ajuste de cor, preto e branco, tonalizar, vinheta, pixelizar, desfoque, sombra e brilho externo. Empilhe quantos quiser.</p></div>
+          <div class="card"><h3>Chroma key</h3><p>Escolha a cor do fundo com o conta-gotas e ajuste tolerância, suavidade e a remoção do reflexo verde.</p></div>
+          <div class="card"><h3>Máscaras</h3><p>Retângulo, elipse ou forma livre, editadas direto no preview. Suavize a borda, inverta e anime.</p></div>
+        </div>
+
+        <h2 style="margin-top:56px">Crie seus efeitos e compartilhe</h2>
+        <p class="lead">Efeitos, transições e entradas/saídas são escritos em GLSL, num arquivo que qualquer pessoa pode instalar. O código só calcula a cor de cada pixel: não acessa arquivos, rede nem o resto do app.</p>
+        <div class="grid">
+          <div class="card"><h3>Editor com pré-visualização</h3><p>Escreva o shader, declare os parâmetros e veja o resultado ao vivo. Erros apontam a linha certa.</p></div>
+          <div class="card"><h3>Instale com um arquivo</h3><p>Abra ou arraste um <code>.csfx.json</code>: o app mostra o que ele faz e o código antes de instalar.</p></div>
+          <div class="card"><h3>Compatível com gl-transitions</h3><p>Importe transições <code>.glsl</code> do gl-transitions. As extensões usadas vão junto no projeto.</p></div>
+        </div>
+        <pre style="margin-top:24px"><span class="c">// entrada/saída: progress vai de 0 a 1 ao entrar e de 1 a 0 ao sair</span>
+vec4 animate(vec2 uv) {
+  float r = length(uv - 0.5);
+  float visivel = step(r, progress * 0.75);
+  return getColor(uv) * visivel;
+}</pre>
+      </div>
+    </section>
+
+    <section id="texto">
+      <div class="wrap">
+        <h2>Texto</h2>
+        <p class="lead">Títulos e legendas com acabamento, sem sair do editor.</p>
+        <div class="grid">
+          <div class="card"><h3>Estilo</h3><p>Dois contornos, gradiente, sombra, caixa de fundo em bloco ou por linha, espaçamento entre letras e entre linhas, tudo em maiúsculas.</p></div>
+          <div class="card"><h3>Letra por letra</h3><p>Entrada e saída por letra, palavra ou linha: aparecer, subir, cair, deslizar, saltar, girar, desfocar ou máquina de escrever, em várias ordens.</p></div>
+          <div class="card"><h3>Movimento contínuo</h3><p>Onda, tremor, pulsar e piscar enquanto o texto está na tela.</p></div>
         </div>
       </div>
     </section>
@@ -160,8 +204,51 @@
           <li><div><b>Anime</b><span>Clique em ◆ ao lado de uma propriedade, mova o playhead e mude o valor. Ou aplique uma animação pronta de entrada.</span></div></li>
           <li><div><b>Use no vídeo</b><span>"Usar na timeline" coloca a composição sobre o vídeo. Exporte em MP4.</span></div></li>
         </ol>
+      </div>
+    </section>
+
+    <section id="leve">
+      <div class="wrap">
+        <h2>Leve em computador fraco</h2>
+        <p class="lead">O editor só trabalha quando precisa, e um painel de Desempenho deixa você ajustar o resto à sua máquina.</p>
+        <div class="grid">
+          <div class="card"><h3>Preview sob demanda</h3><p>Parado, o preview não gasta processador: só redesenha quando algo muda. A qualidade pode ser automática, cheia, 1/2 ou 1/4; a exportação sai sempre em resolução cheia.</p></div>
+          <div class="card"><h3>Arquivos proxy</h3><p>No desktop, vídeos pesados ganham uma cópia leve, gerada em segundo plano e usada só no preview. A exportação lê sempre o original.</p></div>
+          <div class="card"><h3>Pouca memória</h3><p>No desktop, os vídeos são lidos direto do disco e a exportação é gravada aos poucos. A forma de onda guarda só os picos, não o áudio.</p></div>
+          <div class="card"><h3>Placa de vídeo: você decide</h3><p>Ligue ou desligue o uso da placa de vídeo no app desktop e veja se ela está de fato em uso. Há também uma exportação rápida.</p></div>
+          <div class="card"><h3>Timeline ágil</h3><p>Só a parte visível da timeline é montada, então projetos com centenas de clipes continuam respondendo.</p></div>
+          <div class="card"><h3>Medidor embutido</h3><p>Quadros por segundo e tempo gasto em cada parte, para ver onde a máquina sofre.</p></div>
+        </div>
+
+        <h2 style="margin-top:56px">Interface do seu jeito</h2>
+        <p class="lead">Monte a tela para o que você está fazendo. O arranjo fica lembrado.</p>
+        <div class="grid">
+          <div class="card"><h3>Painéis ocultáveis e movíveis</h3><p>Mostre ou oculte Mídia, Preview, Inspector e Timeline, troque a ordem das colunas, ponha uma delas em altura inteira ou leve a timeline para cima.</p></div>
+          <div class="card"><h3>Altura das tracks</h3><p>Arraste a borda de uma track para deixá-la mais alta ou mais baixa. Cada track tem a sua altura, salva no projeto.</p></div>
+          <div class="card"><h3>Barra enxuta</h3><p>A barra superior usa só ícones e cabe em janelas pequenas; layouts prontos para vídeo vertical e timeline grande continuam a um clique.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="atalhos">
+      <div class="wrap">
+        <h2>Atalhos</h2>
+        <p class="lead">Os mesmos de editores populares como o CapCut. Aperte <kbd>?</kbd> no app para ver a lista completa.</p>
+        <h3 class="keys-title">Timeline</h3>
         <div class="keys">
           <span><kbd>Espaço</kbd> play</span>
+          <span><kbd>B</kbd> ferramenta de corte</span>
+          <span><kbd>A</kbd> seleção</span>
+          <span><kbd>S</kbd> ou <kbd>Ctrl</kbd>+<kbd>B</kbd> dividir</span>
+          <span><kbd>Q</kbd> apagar antes do playhead</span>
+          <span><kbd>W</kbd> apagar depois</span>
+          <span><kbd>↑</kbd> <kbd>↓</kbd> corte anterior / próximo</span>
+          <span><kbd>N</kbd> ímã</span>
+          <span><kbd>Shift</kbd>+<kbd>Z</kbd> ajustar zoom</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer</span>
+        </div>
+        <h3 class="keys-title">Motion</h3>
+        <div class="keys">
           <span><kbd>V</kbd> selecionar</span>
           <span><kbd>R</kbd> retângulo</span>
           <span><kbd>O</kbd> elipse</span>
@@ -169,8 +256,20 @@
           <span><kbd>P</kbd> caneta</span>
           <span><kbd>Y</kbd> âncora</span>
           <span><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicar</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer</span>
         </div>
+      </div>
+    </section>
+
+    <section id="ia">
+      <div class="wrap">
+        <h2>Edite conversando com o Claude</h2>
+        <p class="lead">No app desktop, o Claude (ou outra IA compatível com MCP) se conecta ao projeto aberto e edita junto com você. Cada mudança aparece na hora e se desfaz com <kbd>Ctrl</kbd>+<kbd>Z</kbd>.</p>
+        <ol class="steps">
+          <li><div><b>Ligue a conexão</b><span>Clique em "IA" na barra superior e ative "Permitir conexão de IA".</span></div></li>
+          <li><div><b>Configure o Claude uma vez</b><span>Copie o comando mostrado ali para o Claude Code ou o bloco para o Claude Desktop.</span></div></li>
+          <li><div><b>Peça</b><span>"Monte um vídeo com os arquivos de ~/Vídeos/viagem, com título animado e transições."</span></div></li>
+        </ol>
+        <p class="lead" style="margin:24px 0 0">A conexão aceita só o seu computador, com uma senha nova a cada vez, e é desligada quando você fecha o app.</p>
       </div>
     </section>
 

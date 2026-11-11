@@ -3,17 +3,29 @@ import {
   state, emit, checkpoint, undo, redo, getClip, getTrack, orderedTracks, overlaps, addTrack, createTextClip,
   findFreeSlot, serializeProject, loadProject, newProject, newMotionState, resetHistory, uid, projectDuration, subscribe,
 } from './state/project.js';
-import { attachBlob, clearRuntime, isMissing } from './media/library.js';
+import { attachPath, clearRuntime, isMissing } from './media/library.js';
 import { togglePlay, pause, seek, releaseAll } from './engine/player.js';
-import { saveFile, openFile, readFileByPath, isDesktop } from './platform/index.js';
-import { initTimeline, splitAtPlayhead, deleteSelected, zoomIn, zoomOut } from './ui/timeline.js';
+import { saveFile, openFile, isDesktop } from './platform/index.js';
+import {
+  initTimeline, splitAtPlayhead, deleteSelected, zoomIn, zoomOut, zoomToFit, setTool, getTool, toggleSnap, trimToPlayhead, jumpToEdit,
+} from './ui/timeline.js';
+import { openShortcuts } from './ui/shortcuts.js';
 import { initPreview } from './ui/preview.js';
 import { initInspector } from './ui/inspector.js';
 import { initMediaPanel, importDialog } from './ui/mediaPanel.js';
 import { openSettings, openExport, openMissingMedia, openNewComp } from './ui/dialogs.js';
 import { initMotion, enterMotion, exitMotion, handleMotionKey } from './ui/motion/workspace.js';
+import { maskKey } from './ui/maskEditor.js';
+import { openExtensions, installFromFile, isExtensionFile } from './ui/extensions.js';
+import { initAiBridge } from './mcp/bridge.js';
+import { initAiPanel, openAiPanel } from './ui/aiPanel.js';
+import { embedUsedExtensions, onExtensionsChange } from './fx/registry.js';
 import { toast } from './ui/util.js';
 import { initLayout } from './ui/layout.js';
+import { openPerformance } from './ui/performance.js';
+import { initProxies } from './media/proxy.js';
+import { setSoftwareRendering } from './ui/preview.js';
+import { glRenderer, isSoftwareRenderer } from './fx/gl.js';
 import { applyIcons } from './ui/icons.js';
 
 applyIcons();
@@ -23,6 +35,11 @@ initPreview();
 initInspector(document.getElementById('inspector'));
 initTimeline(document.getElementById('timeline'));
 initMotion();
+initAiBridge();
+initAiPanel();
+initProxies();
+// sem placa de vídeo, a qualidade automática do preview cai pela metade (verificado com a máquina ociosa)
+(window.requestIdleCallback || setTimeout)(() => setSoftwareRendering(isSoftwareRenderer(glRenderer())));
 
 let dirty = false;
 let clipboard = null;
@@ -54,6 +71,9 @@ const actions = {
   'new-comp': openNewComp,
   'mode-edit': exitMotion,
   'mode-motion': enterMotion,
+  extensions: () => openExtensions(),
+  ai: openAiPanel,
+  performance: openPerformance,
   settings: openSettings,
   export: openExport,
   play: togglePlay,
@@ -85,6 +105,8 @@ function addText() {
 // ---------------------------------------------------------------- projeto
 async function saveProject() {
   const name = `${state.projectName || 'projeto'}.json`;
+  // o projeto leva uma cópia das extensões que usa, para abrir em outra máquina
+  embedUsedExtensions();
   const saved = await saveFile(name, new TextEncoder().encode(serializeProject()), [{ name: 'Projeto CorteSeco Studio', extensions: ['json'] }]);
   if (saved) {
     dirty = false;
@@ -113,8 +135,7 @@ async function openProject() {
   // recarrega as mídias pelos caminhos salvos (desktop)
   for (const media of state.project.media) {
     try {
-      const bytes = await readFileByPath(media.path);
-      if (bytes) await attachBlob(media, new Blob([bytes]));
+      if (media.path) await attachPath(media, media.path);
     } catch (err) {
       console.warn('Falha ao carregar', media.path, err);
     }
@@ -158,6 +179,12 @@ document.addEventListener('keydown', (e) => {
   const fps = state.project.settings.fps;
   let handled = true;
 
+  if (e.key === '?' || (ctrl && key === '/')) {
+    openShortcuts();
+    e.preventDefault();
+    return;
+  }
+
   if (state.mode === 'motion') {
     // desfazer, salvar e importar valem nos dois modos; o resto é do workspace de motion
     if (ctrl && key === 'z' && !e.shiftKey) undo();
@@ -165,6 +192,11 @@ document.addEventListener('keydown', (e) => {
     else if (ctrl && key === 's') saveProject();
     else if (ctrl && key === 'i') importDialog();
     else if (!handleMotionKey(e)) return;
+    e.preventDefault();
+    return;
+  }
+
+  if (!ctrl && state.maskEdit && maskKey(e, state.selection ? getClip(state.selection) : null)) {
     e.preventDefault();
     return;
   }
@@ -179,9 +211,21 @@ document.addEventListener('keydown', (e) => {
   else if (ctrl && key === 'd') { if (copySelected()) paste(); }
   else if (ctrl && key === 'e') openExport();
   else if (ctrl && key === 'i') importDialog();
+  else if (ctrl && key === 'b') splitAtPlayhead();
+  else if (ctrl && (key === '=' || key === '+')) zoomIn();
+  else if (ctrl && key === '-') zoomOut();
   else if (ctrl) handled = false;
+  else if (e.altKey) handled = false;
   else if (key === ' ') togglePlay();
   else if (key === 's') splitAtPlayhead();
+  else if (key === 'a') setTool('select');
+  else if (key === 'b') setTool('blade');
+  else if (key === 'q') trimToPlayhead('left');
+  else if (key === 'w') trimToPlayhead('right');
+  else if (key === 'n') toggleSnap();
+  else if (key === 'z' && e.shiftKey) zoomToFit();
+  else if (key === 'arrowup') jumpToEdit(-1);
+  else if (key === 'arrowdown') jumpToEdit(1);
   else if (key === 't') addText();
   else if (key === 'delete' || key === 'backspace') deleteSelected(e.shiftKey);
   else if (key === 'arrowleft') seek(state.time - (e.shiftKey ? 1 : 1 / fps));
@@ -190,11 +234,26 @@ document.addEventListener('keydown', (e) => {
   else if (key === 'end') seek(projectDuration());
   else if (key === '+' || key === '=') zoomIn();
   else if (key === '-') zoomOut();
-  else if (key === 'escape') { state.selection = null; emit('selection'); }
+  else if (key === 'escape') {
+    if (getTool() !== 'select') setTool('select');
+    else { state.selection = null; emit('selection'); }
+  }
   else handled = false;
 
   if (handled) e.preventDefault();
 });
+
+// instalar ou remover uma extensão muda as listas de efeitos e transições dos inspectors
+onExtensionsChange(() => emit('extensions'));
+
+// arquivos de extensão (.csfx.json, .glsl) soltos em qualquer lugar da janela abrem a tela de instalação
+window.addEventListener('drop', (e) => {
+  const files = [...(e.dataTransfer?.files || [])].filter((f) => isExtensionFile(f.name));
+  if (!files.length) return;
+  e.preventDefault();
+  e.stopPropagation();
+  for (const file of files) installFromFile(file);
+}, true);
 
 // impede o navegador de abrir arquivos soltos fora das áreas de drop
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -215,10 +274,20 @@ if (new URLSearchParams(location.search).has('test')) {
     import('./state/project.js'), import('./state/keyframes.js'), import('./media/library.js'),
     import('./engine/exporter.js'), import('./ui/timeline.js'),
     import('./motion/model.js'), import('./motion/presets.js'), import('./motion/svgImport.js'), import('./ui/motion/actions.js'),
-  ]).then(([project, keyframes, library, exporter, timeline, model, presets, svg, motionActions]) => {
+    import('./fx/registry.js'), import('./fx/mask.js'), import('./fx/gl.js'), import('./fx/shader.js'),
+    import('./mcp/tools.js'), import('./perf.js'), import('./engine/player.js'), import('./prefs.js'), import('./ui/preview.js'), import('./ui/layout.js'),
+  ]).then(([project, keyframes, library, exporter, timeline, model, presets, svg, motionActions, fxRegistry, fxMask, fxGl, fxShader, mcpTools, perfMod, player, prefs, preview, layoutMod]) => {
     window.__mine = {
       ...project, ...keyframes, ...library, ...exporter, placeMedia: timeline.placeMedia, placeComp: timeline.placeComp, saveProject, openProject,
       motion: { ...model, ...presets, ...svg, ...motionActions },
+      undo, redo,
+      fx: { ...fxRegistry, ...fxMask, ...fxGl, ...fxShader, openExtensions, installFromFile },
+      mcp: mcpTools,
+      perf: perfMod,
+      player,
+      prefs,
+      preview,
+      layout: layoutMod,
     };
   });
 }

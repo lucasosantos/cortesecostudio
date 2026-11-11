@@ -9,6 +9,7 @@ import { removeComp, compUsage } from '../motion/model.js';
 import { drawComp } from '../motion/render.js';
 import { openComp, exitMotion } from './motion/actions.js';
 import { openNewComp } from './dialogs.js';
+import { timed } from '../perf.js';
 
 let root, grid, compGrid, compEmpty;
 
@@ -36,7 +37,7 @@ export function initMediaPanel(el) {
     root.classList.remove('dragover');
     await importFiles([...e.dataTransfer.files]);
   });
-  subscribe((r) => { if (r === 'media' || r === 'project' || r === 'mode') render(); });
+  subscribe((r) => { if (r === 'media' || r === 'project' || r === 'mode') timed('mediaPanel', render); });
   render();
 }
 
@@ -45,12 +46,33 @@ export async function importDialog() {
   if (files.length) await importFiles(files);
 }
 
+// A grade só é refeita quando a lista muda: emit('project') acontece a cada movimento do mouse num arrasto.
+let mediaSig = null;
+let compSig = null;
+const compCanvases = new Map(); // compId → { canvas, hash }
+let thumbTimer = 0;
+
 function render() {
+  const sig = state.project.media.map((m) => {
+    const rt = runtime.get(m.id);
+    return [m.id, m.name, m.type, m.duration, m.width, m.height, isMissing(m.id) ? 1 : 0, rt?.thumb?.length || 0, rt?.waveform ? 1 : 0, rt?.proxy || ''].join(':');
+  }).join('|');
+  if (sig !== mediaSig) {
+    mediaSig = sig;
+    renderMedia();
+  }
+  renderComps();
+}
+
+function renderMedia() {
   const icon = { video: '🎬', audio: '♪', image: '🖼' };
   const label = { video: 'VÍDEO', audio: 'ÁUDIO', image: 'IMAGEM' };
+  // os eventos buscam a mídia pelo id na hora: depois de um desfazer os objetos do projeto são outros
+  const find = (id) => state.project.media.find((x) => x.id === id);
   grid.replaceChildren(...state.project.media.map((m) => {
-    const rt = runtime.get(m.id);
-    const missing = isMissing(m.id);
+    const id = m.id;
+    const rt = runtime.get(id);
+    const missing = isMissing(id);
     const thumb = h('div.thumb', { style: rt?.thumb ? { backgroundImage: `url(${rt.thumb})` } : {} });
     if (missing) thumb.append('Arquivo ausente — clique para localizar');
     else if (!rt?.thumb) thumb.append(m.type === 'audio' && rt?.waveform ? '' : icon[m.type]);
@@ -61,24 +83,27 @@ function render() {
       title: `${m.name}\nDuplo clique: adicionar no playhead`,
       on: {
         dragstart: (e) => {
-          e.dataTransfer.setData(MEDIA_MIME, m.id);
+          e.dataTransfer.setData(MEDIA_MIME, id);
           e.dataTransfer.effectAllowed = 'copy';
         },
-        dblclick: () => !missing && placeMedia(m, null, state.time),
-        click: () => missing && relinkOne(m),
+        dblclick: () => { const media = find(id); if (media && !isMissing(id)) placeMedia(media, null, state.time); },
+        click: () => { const media = find(id); if (media && isMissing(id)) relinkOne(media); },
       },
     },
     thumb,
     h('span.badge', {}, label[m.type]),
+    rt?.proxy ? h(`span.badge.proxy-badge${rt.proxy === 'ready' ? '.ready' : ''}`, { title: rt.proxy === 'ready' ? 'O preview usa uma cópia leve deste vídeo (a exportação usa o original)' : 'Gerando a cópia leve para o preview…' }, rt.proxy === 'ready' ? 'PROXY' : `PROXY ${rt.proxy}`) : null,
     withIcon(h('button.remove', {
       title: 'Remover da biblioteca (e da timeline)',
       on: {
         click: (e) => {
           e.stopPropagation();
-          const used = state.project.clips.filter((c) => c.mediaId === m.id).length;
-          if (used && !confirm(`"${m.name}" é usado em ${used} clipe(s). Remover mesmo assim?`)) return;
+          const media = find(id);
+          if (!media) return;
+          const used = state.project.clips.filter((c) => c.mediaId === id).length;
+          if (used && !confirm(`"${media.name}" é usado em ${used} clipe(s). Remover mesmo assim?`)) return;
           checkpoint();
-          removeMedia(m.id);
+          removeMedia(id);
           emit('project');
         },
       },
@@ -89,48 +114,89 @@ function render() {
     ));
     return item;
   }));
-  renderComps();
+}
+
+const getCompById = (id) => (state.project.comps || []).find((c) => c.id === id);
+
+/** Código curto do conteúdo, para saber se a miniatura precisa ser redesenhada. */
+function hashOf(text) {
+  let hsh = 5381;
+  for (let i = 0; i < text.length; i++) hsh = ((hsh << 5) + hsh + text.charCodeAt(i)) | 0;
+  return `${text.length}:${hsh}`;
+}
+
+function drawCompThumb(comp, canvas, openId) {
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const s = Math.min(192 / comp.width, 108 / comp.height);
+  ctx.translate((192 - comp.width * s) / 2, (108 - comp.height * s) / 2);
+  ctx.scale(s, s);
+  try {
+    // um frame da composição (o do playhead, se ela estiver aberta)
+    drawComp(ctx, comp, comp.id === openId ? state.motion.time : Math.min(comp.duration / 2, 1), (item) => runtime.get(item.mediaId)?.image || null);
+  } catch (err) {
+    console.warn('Falha ao desenhar a miniatura de', comp.name, err);
+  }
+}
+
+/** Redesenha só as miniaturas das composições que mudaram. */
+function refreshCompThumbs() {
+  const openId = state.mode === 'motion' ? state.motion.compId : null;
+  for (const comp of state.project.comps || []) {
+    const entry = compCanvases.get(comp.id);
+    if (!entry) continue;
+    const hash = hashOf(JSON.stringify(comp)) + (runtime.size ? `/${runtime.size}` : '');
+    if (hash === entry.hash) continue;
+    entry.hash = hash;
+    timed('compThumb', () => drawCompThumb(comp, entry.canvas, openId));
+  }
 }
 
 function renderComps() {
   const comps = state.project.comps || [];
-  compEmpty.style.display = comps.length ? 'none' : '';
   const openId = state.mode === 'motion' ? state.motion.compId : null;
+  // miniaturas: desenhadas um pouco depois da última mudança (desenhar a cada movimento do mouse é caro)
+  clearTimeout(thumbTimer);
+  thumbTimer = setTimeout(refreshCompThumbs, 300);
+  const sig = `${openId}|` + comps.map((c) => [c.id, c.name, c.duration, c.width, c.height].join(':')).join('|');
+  if (sig === compSig) return;
+  compSig = sig;
+  compEmpty.style.display = comps.length ? 'none' : '';
+  for (const id of [...compCanvases.keys()]) if (!comps.some((c) => c.id === id)) compCanvases.delete(id);
   compGrid.replaceChildren(...comps.map((comp) => {
-    // miniatura: um frame da composição (o do playhead, se ela estiver aberta)
-    const canvas = h('canvas', { width: 192, height: 108 });
-    const ctx = canvas.getContext('2d');
-    const s = Math.min(192 / comp.width, 108 / comp.height);
-    ctx.translate((192 - comp.width * s) / 2, (108 - comp.height * s) / 2);
-    ctx.scale(s, s);
-    try {
-      drawComp(ctx, comp, comp.id === openId ? state.motion.time : Math.min(comp.duration / 2, 1), (item) => runtime.get(item.mediaId)?.image || null);
-    } catch (err) {
-      console.warn('Falha ao desenhar a miniatura de', comp.name, err);
+    const id = comp.id;
+    let entry = compCanvases.get(id);
+    if (!entry) {
+      // composição nova: a miniatura aparece na hora
+      entry = { canvas: h('canvas', { width: 192, height: 108 }), hash: null };
+      compCanvases.set(id, entry);
     }
-    return h(`div.media-item.comp-item${comp.id === openId ? '.open' : ''}`, {
+    return h(`div.media-item.comp-item${id === openId ? '.open' : ''}`, {
       draggable: true,
       title: `${comp.name}\nDuplo clique: editar no workspace de motion\nArraste para a timeline para usar no vídeo`,
       on: {
         dragstart: (e) => {
-          e.dataTransfer.setData(COMP_MIME, comp.id);
+          e.dataTransfer.setData(COMP_MIME, id);
           e.dataTransfer.effectAllowed = 'copy';
         },
-        dblclick: () => openComp(comp.id),
+        dblclick: () => openComp(id),
       },
     },
-    h('div.thumb', {}, canvas),
+    h('div.thumb', {}, entry.canvas),
     h('span.badge', {}, 'MOTION'),
     h('button.remove', {
       title: 'Excluir a composição (e os clipes que a usam)',
       on: {
         click: (e) => {
           e.stopPropagation();
-          const used = compUsage(comp.id);
-          if (!confirm(used ? `"${comp.name}" é usada em ${used} clipe(s). Excluir mesmo assim?` : `Excluir a composição "${comp.name}"?`)) return;
+          const current = getCompById(id);
+          if (!current) return;
+          const used = compUsage(id);
+          if (!confirm(used ? `"${current.name}" é usada em ${used} clipe(s). Excluir mesmo assim?` : `Excluir a composição "${current.name}"?`)) return;
           checkpoint();
-          if (comp.id === openId) exitMotion();
-          removeComp(comp.id);
+          if (id === (state.mode === 'motion' ? state.motion.compId : null)) exitMotion();
+          removeComp(id);
           emit('project');
         },
       },
@@ -140,6 +206,8 @@ function renderComps() {
       h('div.sub', {}, h('span', {}, formatDuration(comp.duration)), h('span', {}, `${comp.width}×${comp.height}`)),
     ));
   }));
+  // as que acabaram de entrar não esperam
+  if ([...compCanvases.values()].some((e) => e.hash === null)) refreshCompThumbs();
 }
 
 /** Pede ao usuário o arquivo correspondente a uma mídia ausente. */

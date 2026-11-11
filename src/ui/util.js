@@ -1,5 +1,13 @@
 // Utilidades de UI.
 
+/** Aplica um objeto de estilos; nomes começando com "--" são variáveis CSS (que só entram por setProperty). */
+export function setStyle(el, styles) {
+  for (const [k, v] of Object.entries(styles)) {
+    if (k.startsWith('--')) el.style.setProperty(k, v);
+    else el.style[k] = v;
+  }
+}
+
 /** Cria um elemento: h('div.cls#id', { attrs, on: {click} }, ...children) */
 export function h(sel, attrs = {}, ...children) {
   const [, tag = 'div', rest = ''] = sel.match(/^([a-z0-9-]*)(.*)$/i);
@@ -11,13 +19,31 @@ export function h(sel, attrs = {}, ...children) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v == null || v === false) continue;
     if (k === 'on') for (const [ev, fn] of Object.entries(v)) el.addEventListener(ev, fn);
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') setStyle(el, v);
     else if (k === 'dataset') Object.assign(el.dataset, v);
+    // em <textarea> o atributo "value" não existe: o conteúdo só entra pela propriedade
+    else if (k === 'value' && el.tagName === 'TEXTAREA') el.value = v;
     else if (k in el && k !== 'list' && typeof v !== 'string') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
   for (const c of children.flat()) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
   return el;
+}
+
+/**
+ * Faixa de tempo a desenhar: o que está visível mais meia tela de cada lado.
+ * @returns { t0, t1 (segundos), x0, x1 (pixels de rolagem em que a faixa continua valendo) }
+ */
+export function visibleWindow(scrollLeft, viewWidth, zoom, headWidth = 0) {
+  const laneW = Math.max(1, viewWidth - headWidth);
+  const margin = laneW / 2;
+  return {
+    t0: Math.max(0, (scrollLeft - margin) / zoom),
+    t1: (scrollLeft + laneW + margin) / zoom,
+    // só redesenha quando a rolagem passa de um quarto de tela além do que foi criado
+    x0: scrollLeft - margin / 2,
+    x1: scrollLeft + margin / 2,
+  };
 }
 
 export function formatTime(t, fps) {

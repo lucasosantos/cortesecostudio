@@ -2,13 +2,18 @@
 import { state, emit, getMedia, getTrack, projectDuration } from '../state/project.js';
 import { valueAt } from '../state/keyframes.js';
 import { runtime } from '../media/library.js';
-import { buildTransitionIndex } from './compositor.js';
+import { transitionIndexFor } from './compositor.js';
 
 const pool = new Map(); // clipId -> { el, gain, mediaId }
 let audioCtx = null;
 let host = null;
 let wallStart = 0;
 let timeStart = 0;
+// avisa o preview de que um vídeo tem quadro novo para mostrar (terminou de buscar ou de carregar)
+let onMediaFrame = () => {};
+export function setMediaFrameListener(fn) {
+  onMediaFrame = fn || (() => {});
+}
 
 function ctx() {
   if (!audioCtx) audioCtx = new AudioContext();
@@ -27,21 +32,27 @@ function hostEl() {
 function entryFor(clip) {
   let e = pool.get(clip.id);
   const rt = runtime.get(clip.mediaId);
-  if (e && e.mediaId === clip.mediaId && e.url === rt?.url) return e;
+  // o preview toca o proxy (cópia leve) quando ele existe; senão, o arquivo original
+  const url = rt?.proxyUrl || rt?.url;
+  if (e && e.mediaId === clip.mediaId && e.url === url) return e;
   if (e) destroy(clip.id);
-  if (!rt?.url) return null;
+  if (!url) return null;
   const el = document.createElement(clip.type === 'video' ? 'video' : 'audio');
   el.preload = 'auto';
   el.playsInline = true;
-  el.src = rt.url;
+  // arquivo servido pelo protocolo media://: sem isto o quadro "suja" o canvas e o áudio sai mudo
+  if (rt.remote || rt.proxyUrl) el.crossOrigin = 'anonymous';
+  el.src = url;
   el.addEventListener('seeked', () => {
     if (e.target != null && Math.abs(el.currentTime - e.target) > 0.02 && el.paused) el.currentTime = e.target;
+    onMediaFrame();
   });
+  for (const ev of ['loadeddata', 'canplay']) el.addEventListener(ev, () => onMediaFrame());
   hostEl().appendChild(el);
   const source = ctx().createMediaElementSource(el);
   const gain = ctx().createGain();
   source.connect(gain).connect(ctx().destination);
-  e = { el, gain, mediaId: clip.mediaId, url: rt.url, target: null };
+  e = { el, gain, mediaId: clip.mediaId, url, target: null };
   pool.set(clip.id, e);
   return e;
 }
@@ -68,7 +79,7 @@ export function previewSource(clip) {
 }
 
 /** Sincroniza todos os elementos de mídia com o tempo atual. */
-export function syncMedia(index = buildTransitionIndex(state.project)) {
+export function syncMedia(index = transitionIndexFor(state.project, state.rev)) {
   const t = state.time;
   const playing = state.playing;
   const alive = new Set();
@@ -114,6 +125,15 @@ export function syncMedia(index = buildTransitionIndex(state.project)) {
     }
   }
   for (const id of [...pool.keys()]) if (!alive.has(id)) destroy(id);
+}
+
+/** Todos os vídeos/áudios parados já chegaram ao quadro pedido (para capturar um quadro fiel)? */
+export function mediaSettled() {
+  for (const e of pool.values()) {
+    if (e.target == null) continue;
+    if (e.el.seeking || e.el.readyState < 2 || Math.abs(e.el.currentTime - e.target) > 0.05) return false;
+  }
+  return true;
 }
 
 export function play() {

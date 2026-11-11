@@ -113,6 +113,21 @@ export function removeKeyframesAt(clip, t) {
   for (const p of animatedProps(clip)) if (keyframeAt(clip, p, t)) removeKeyframe(clip, p, t);
 }
 
+/**
+ * Divide a animação no tempo local `local`: `left` fica com os keyframes até ali, `right` com os seguintes
+ * (ainda nos tempos originais). Os dois ganham um keyframe na fronteira para a animação não mudar.
+ */
+export function splitKeyframes(left, right, local) {
+  for (const p of animatedProps(left)) {
+    if (!hasKeyframes(left, p)) continue;
+    const v = valueAt(left, p, local);
+    setKeyframe(left, p, local, v);
+    setKeyframe(right, p, local, v);
+    left.keyframes[p] = left.keyframes[p].filter((k) => k.t <= local + 1e-6);
+    right.keyframes[p] = right.keyframes[p].filter((k) => k.t >= local - 1e-6);
+  }
+}
+
 /** Desloca todos os keyframes por dt (usado ao aparar o início do clipe). */
 export function shiftKeyframes(clip, dt) {
   for (const p of animatedProps(clip)) {

@@ -17,6 +17,8 @@ import * as pen from './penTool.js';
 import { bezierEditor } from './easingEditor.js';
 import { placeComp } from '../timeline.js';
 import { h, clamp, toast } from '../util.js';
+import { fxKey, effectsSection, layerAnimSection } from '../fxPanel.js';
+import { textStyleRows, textAnimSection } from '../textStyle.js';
 
 const FONTS = [
   ['Inter, Arial, sans-serif', 'Sans (Inter/Arial)'],
@@ -39,7 +41,7 @@ export function initMotionInspector(el) {
   root = el;
   subscribe((reason) => {
     if (state.mode !== 'motion') return;
-    if (!['project', 'motion', 'motion-time', 'mode', 'media'].includes(reason)) return;
+    if (!['project', 'motion', 'motion-time', 'mode', 'media', 'extensions'].includes(reason)) return;
     const key = keyFor();
     if (key !== builtKey) build();
     else refresh();
@@ -50,7 +52,7 @@ function keyFor() {
   const comp = currentComp();
   if (!comp) return 'none';
   const sel = selectedLayers(comp);
-  const sig = sel.map((l) => `${l.id}/${l.type}/${l.shape || ''}/${l.fillOn}/${l.strokeOn}/${!!l.matte}/${l.locked}`).join(',');
+  const sig = sel.map((l) => `${l.id}/${l.type}/${l.shape || ''}/${l.fillOn}/${l.strokeOn}/${!!l.matte}/${l.locked}/${fxKey(l)}`).join(',');
   return `${comp.id}|${sig}|${comp.layers.length}|${!!M().pathEdit}|${comp.background ? 1 : 0}`;
 }
 
@@ -243,9 +245,25 @@ function layerPanel(comp, layer) {
   out.push(tr);
 
   if (layer.type === 'shape') out.push(h('h3', {}, 'Forma'), shapeSection(layer));
-  if (layer.type === 'text') out.push(h('h3', {}, 'Texto'), textSection(layer));
+  if (layer.type === 'text') {
+    out.push(h('h3', {}, 'Texto'), textSection(layer));
+    out.push(h('h3', {}, 'Animação do texto'), textAnimSection(layer, { beginEdit, endEdit, locked: () => !!layer.locked, span: () => layer.out - layer.in }));
+  }
   if (layer.type === 'group') out.push(section(h('div.insp-note', {}, 'Grupos não aparecem no vídeo: servem de pai para mover, girar e escalar várias camadas juntas (escolha o pai na timeline).')));
 
+  if (layer.type !== 'group') {
+    out.push(h('h3', {}, 'Efeitos'), effectsSection(layer, {
+      bindings, beginEdit, endEdit,
+      getTime: () => M().time,
+      seek: (t) => { pauseMotion(); seekMotion(t); },
+      locked: () => !!layer.locked,
+    }));
+  }
+  if (layer.type !== 'group') {
+    const env = { bindings, beginEdit, endEdit, locked: () => !!layer.locked };
+    out.push(h('h3', {}, 'Entrada'), layerAnimSection(layer, 'animIn', env));
+    out.push(h('h3', {}, 'Saída'), layerAnimSection(layer, 'animOut', env));
+  }
   out.push(h('h3', {}, 'Animações prontas'), presetSection(comp));
   out.push(h('h3', {}, 'Keyframes'), easingSection());
   return out;
@@ -443,10 +461,7 @@ function textSection(layer) {
   ));
   sec.append(row('Alinhar', h('select', { on: { change: (e) => { beginEdit(); f.align = e.target.value; endEdit(); emit('project'); } } },
     ...[['left', 'Esquerda'], ['center', 'Centro'], ['right', 'Direita']].map(([v, n]) => h('option', { value: v, selected: v === f.align }, n)))));
-  sec.append(row('Contorno',
-    h('input', { type: 'color', value: f.stroke || '#000000', on: { focus: beginEdit, blur: endEdit, input: (e) => { beginEdit(); f.stroke = e.target.value; emit('project'); } } }),
-    h('input', { type: 'number', min: 0, step: 1, value: f.strokeWidth || 0, on: { focus: beginEdit, blur: endEdit, input: (e) => restyle(() => { f.strokeWidth = Math.max(0, Number(e.target.value) || 0); }) } }),
-  ));
+  sec.append(...textStyleRows(layer, { restyle, beginEdit, endEdit, locked: () => !!layer.locked }));
   return sec;
 }
 

@@ -1,0 +1,1005 @@
+{
+  "instructions": "CorteSeco Studio is a multitrack video editor with a motion-design module. These tools act on the project currently open in the running desktop app; the user watches every change live and can undo it. Units: time in seconds, sizes and positions in pixels of the project frame (origin top-left). Workflow: call get_project first to learn ids; call get_capabilities once to learn effect ids, transition types, easings and animatable properties; after edits, call get_frame to look at the result. Every mutating call is one undo step. Clips on the same track cannot overlap. Visual tracks listed first are in front. Keyframe times are relative to the start of the clip (clips) or to the start of the composition (motion layers).",
+  "tools": [
+    {
+      "name": "get_project",
+      "description": "Overview of the open project: settings (width, height, fps), duration, tracks, clips (with ids, timing, static props, which props are animated, effects, masks, transitions), media library, motion compositions, playhead and selection. Call this first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_clip",
+      "description": "Full JSON of one clip, including every keyframe, effect instance and mask.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clipId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "clipId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_composition",
+      "description": "Full JSON of one motion composition: size, duration and all layers with props, keyframes, parents, effects.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "compId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_capabilities",
+      "description": "Reference data needed to build valid edits: available effects (ids and parameters), transitions, easing curves, clip properties, motion layer types, shapes, layer properties, animation presets and mask shapes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_frame",
+      "description": "Renders a frame and returns it as an image so you can see the result. Without compId: the final video frame at `time` (moves the playhead there). With compId: that composition alone at `time` (composition time).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "number",
+            "description": "Seconds. Defaults to the current playhead."
+          },
+          "compId": {
+            "type": "string"
+          },
+          "maxWidth": {
+            "type": "number",
+            "description": "Image width in pixels (default 960, max 1920)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "import_media",
+      "description": "Imports video, audio or image files from disk into the media library by absolute path. Returns the new media entries (id, type, duration, width, height). Use the ids with add_clip.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "add_clip",
+      "description": "Adds a clip to the timeline. Give exactly one of: mediaId (video/audio/image from the library), text (a text clip) or compId (a motion composition). Without trackId, the first compatible track that is free in that time range is used, or a new track is created. Visual clips default to fitting the frame ('contain').",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mediaId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "compId": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "start": {
+            "type": "number",
+            "description": "Timeline position in seconds. Defaults to the end of the project."
+          },
+          "duration": {
+            "type": "number",
+            "description": "Defaults to the media duration (5 s for images and text)."
+          },
+          "inPoint": {
+            "type": "number",
+            "description": "Where in the source media the clip starts (video/audio)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "fit": {
+            "type": "string",
+            "enum": [
+              "contain",
+              "cover",
+              "fill",
+              "original"
+            ],
+            "description": "How a visual clip is sized into the frame."
+          },
+          "props": {
+            "type": "object",
+            "description": "Static values: x, y, width, height, rotation (degrees), opacity (0-1), volume (0-2). Overrides `fit`."
+          },
+          "font": {
+            "type": "object",
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+          },
+          "textAnim": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_clip",
+      "description": "Changes an existing clip. Only the given fields change. `keyframes` replaces the keyframe list of each listed property (null removes the animation). Transitions/entrance/exit accept null to remove.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clipId": {
+            "type": "string"
+          },
+          "start": {
+            "type": "number"
+          },
+          "duration": {
+            "type": "number"
+          },
+          "inPoint": {
+            "type": "number"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "font": {
+            "type": "object",
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+          },
+          "props": {
+            "type": "object",
+            "description": "Static values: x, y, width, height, rotation, opacity, volume."
+          },
+          "keyframes": {
+            "type": "object",
+            "description": "{ prop: [{ t, v, ease }] | null }. t is seconds from the clip start. ease applies from that keyframe to the next: a name from get_capabilities or a cubic-bezier [x1, y1, x2, y2]."
+          },
+          "transition": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Transition from the previous adjacent clip on the same track: { type, duration, direction?, color?, params? }."
+          },
+          "animIn": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Entrance animation: { type, duration, direction?, color?, params? }. type = a transition type or an entry/exit animation 'ext:<id>' (see get_capabilities.entryExitAnimations)."
+          },
+          "animOut": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Exit animation: { type, duration, direction?, color?, params? }. Same types as animIn."
+          },
+          "textAnim": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          }
+        },
+        "required": [
+          "clipId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "split_clip",
+      "description": "Splits a clip at an absolute timeline time. Returns the ids of both halves. Animations are preserved.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clipId": {
+            "type": "string"
+          },
+          "time": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "clipId",
+          "time"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_clips",
+      "description": "Deletes clips. With ripple=true, later clips on the same track move left to close the gap.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clipIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "ripple": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "clipIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_effects",
+      "description": "Replaces the effect list of a clip (clipId) or of a motion layer (compId + layerId). Effects apply in order; shadow, glow and blur always apply last. Pass an empty list to remove all. Effect ids and parameters come from get_capabilities (e.g. 'chroma' for chroma key, 'color' for brightness/contrast/saturation, 'shadow', 'glow').",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clipId": {
+            "type": "string"
+          },
+          "compId": {
+            "type": "string"
+          },
+          "layerId": {
+            "type": "string"
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "params": {
+                  "type": "object",
+                  "description": "Static parameter values. Colors are '#rrggbb' or '#rrggbbaa'."
+                },
+                "keyframes": {
+                  "type": "object",
+                  "description": "{ param: [{ t, v, ease }] } for numeric or color parameters."
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          }
+        },
+        "required": [
+          "effects"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_masks",
+      "description": "Replaces the masks of a timeline clip. A mask crops the clip: only what is inside is visible (or outside, if inverted). Coordinates are fractions (0-1) of the clip box. Shapes: 'rect' and 'ellipse' use x, y, w, h (rect also radius 0-1); 'path' uses points [[x, y], ...] forming a closed polygon. feather is the soft edge in pixels.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clipId": {
+            "type": "string"
+          },
+          "masks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shape": {
+                  "type": "string",
+                  "enum": [
+                    "rect",
+                    "ellipse",
+                    "path"
+                  ]
+                },
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "w": {
+                  "type": "number"
+                },
+                "h": {
+                  "type": "number"
+                },
+                "radius": {
+                  "type": "number"
+                },
+                "feather": {
+                  "type": "number"
+                },
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "inverted": {
+                  "type": "boolean"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "keyframes": {
+                  "type": "object",
+                  "description": "{ x|y|w|h|radius|feather: [{ t, v, ease }] }"
+                }
+              },
+              "required": [
+                "shape"
+              ]
+            }
+          }
+        },
+        "required": [
+          "clipId",
+          "masks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "add_track",
+      "description": "Adds a track. New visual tracks go on top (in front); audio tracks go to the bottom.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "visual",
+              "audio"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_track",
+      "description": "Renames a track, toggles hidden/muted/locked, or moves it one position up or down among tracks of the same kind (up = towards the front).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "muted": {
+            "type": "boolean"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "move": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          }
+        },
+        "required": [
+          "trackId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_track",
+      "description": "Deletes a track and every clip on it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "trackId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_project_settings",
+      "description": "Changes the frame size (even numbers), frame rate or background color of the project. Existing clips keep their pixel positions unless rescale=true.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "fps": {
+            "type": "number"
+          },
+          "background": {
+            "type": "string",
+            "description": "#rrggbb"
+          },
+          "rescale": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_composition",
+      "description": "Creates a motion composition: a separate canvas (transparent by default) where shapes, text, images and vector paths are animated. Add layers with add_layer, then place it on the timeline with add_clip { compId }.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "duration": {
+            "type": "number",
+            "description": "Seconds (default 5)."
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "#rrggbb or null for transparent."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "add_layer",
+      "description": "Adds a layer in front of the others in a composition. type 'shape' needs `shape` (rect, ellipse, polygon, star, line, or path with `points`/`svgPath`). x/y is the layer center in composition pixels; with parentId it is in the parent's own pixels instead (omit x/y to center the layer on the parent). Any animatable property can be set in `props` and animated in `keyframes` (composition time). Colors are '#rrggbbaa'. Layer property names come from get_capabilities.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "shape",
+              "text",
+              "image",
+              "group"
+            ]
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "rect",
+              "ellipse",
+              "polygon",
+              "star",
+              "line",
+              "path"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "w": {
+            "type": "number"
+          },
+          "h": {
+            "type": "number"
+          },
+          "text": {
+            "type": "string"
+          },
+          "font": {
+            "type": "object",
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+          },
+          "mediaId": {
+            "type": "string",
+            "description": "Image media id (type 'image')."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "description": "Path as straight segments, in composition pixels."
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "svgPath": {
+            "type": "string",
+            "description": "Path as an SVG `d` string, in composition pixels."
+          },
+          "fillOn": {
+            "type": "boolean"
+          },
+          "strokeOn": {
+            "type": "boolean"
+          },
+          "props": {
+            "type": "object"
+          },
+          "keyframes": {
+            "type": "object",
+            "description": "{ prop: [{ t, v, ease }] }"
+          },
+          "parentId": {
+            "type": "string",
+            "description": "The layer follows the parent's position, rotation and scale. Coordinates (x, y, points, svgPath) are then in the parent's own pixels: (0,0) is the parent's top-left, and omitting x/y centers the layer on the parent."
+          },
+          "in": {
+            "type": "number"
+          },
+          "out": {
+            "type": "number"
+          },
+          "preset": {
+            "type": "object",
+            "description": "{ id, duration } - a ready-made entrance/exit animation from get_capabilities."
+          },
+          "animIn": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Entry animation of the layer: { type: 'ext:<id>' from get_capabilities.entryExitAnimations, duration (s), params? }. Starts at the layer in-point. null removes it.",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "duration": {
+                "type": "number"
+              },
+              "params": {
+                "type": "object"
+              }
+            }
+          },
+          "animOut": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Exit animation of the layer: { type: 'ext:<id>' from get_capabilities.entryExitAnimations, duration (s), params? }. Ends at the layer out-point. null removes it.",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "duration": {
+                "type": "number"
+              },
+              "params": {
+                "type": "object"
+              }
+            }
+          },
+          "textAnim": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          }
+        },
+        "required": [
+          "compId",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_layer",
+      "description": "Changes a layer of a composition. Only the given fields change. `keyframes` replaces the listed properties (null removes the animation). order moves the layer in the stack.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compId": {
+            "type": "string"
+          },
+          "layerId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "props": {
+            "type": "object"
+          },
+          "keyframes": {
+            "type": "object"
+          },
+          "parentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New parent (null removes it). The layer stays where it is on screen at `keepAt`."
+          },
+          "in": {
+            "type": "number"
+          },
+          "out": {
+            "type": "number"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string"
+          },
+          "font": {
+            "type": "object",
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+          },
+          "fillOn": {
+            "type": "boolean"
+          },
+          "strokeOn": {
+            "type": "boolean"
+          },
+          "matte": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "{ layerId, inverted } - show this layer only where the other layer has content."
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "front",
+              "back",
+              "forward",
+              "backward"
+            ]
+          },
+          "preset": {
+            "type": "object"
+          },
+          "keepAt": {
+            "type": "number",
+            "description": "With parentId: composition time at which the layer keeps its on-screen place when re-parented (default 0). Matters when the parent is animated."
+          },
+          "animIn": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Entry animation of the layer: { type: 'ext:<id>' from get_capabilities.entryExitAnimations, duration (s), params? }. Starts at the layer in-point. null removes it.",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "duration": {
+                "type": "number"
+              },
+              "params": {
+                "type": "object"
+              }
+            }
+          },
+          "animOut": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Exit animation of the layer: { type: 'ext:<id>' from get_capabilities.entryExitAnimations, duration (s), params? }. Ends at the layer out-point. null removes it.",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "duration": {
+                "type": "number"
+              },
+              "params": {
+                "type": "object"
+              }
+            }
+          },
+          "textAnim": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          }
+        },
+        "required": [
+          "compId",
+          "layerId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_layers",
+      "description": "Deletes layers from a composition. Children are re-parented to the deleted layer's parent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compId": {
+            "type": "string"
+          },
+          "layerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "compId",
+          "layerIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "import_svg",
+      "description": "Imports an SVG into a composition: each shape becomes a path layer and each <g> a parent group, centered and scaled to fit. Give the SVG markup or an absolute file path.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compId": {
+            "type": "string"
+          },
+          "svg": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "compId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "install_extension",
+      "description": "Installs a custom effect, transition or entry/exit animation written as a GLSL ES 3.00 fragment shader. Effect: define `vec4 effect(vec2 uv)` and read the image with getColor(uv). Transition: define `vec4 transition(vec2 uv)` and read the scenes with getFromColor(uv)/getToColor(uv). Animation (entry/exit of one element: a clip, a text, a motion layer): define `vec4 animate(vec2 uv)`; uv 0-1 covers the element's box with a 25% margin around it (getColor is transparent outside the box), progress = how visible the element is (0→1 on entry, 1→0 on exit, so one shader serves both), `entering` (bool) tells which one is playing, resolution = element size in px. Available everywhere: time, progress (0-1), resolution, ratio, and the declared params. uv has (0,0) at the bottom-left. Return straight (non-premultiplied) colors. Compilation errors are returned with line numbers. After installing, use the id in set_effects, or 'ext:<id>' as a transition / animIn / animOut type.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Lowercase letters, digits, dot, hyphen (e.g. 'ai.glitch')."
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "effect",
+              "transition",
+              "animation"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "float",
+                    "int",
+                    "bool",
+                    "color",
+                    "color3",
+                    "vec2",
+                    "ivec2"
+                  ]
+                },
+                "default": {},
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name",
+                "type"
+              ]
+            }
+          },
+          "glsl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "glsl"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seek",
+      "description": "Moves the playhead of the main timeline to a time in seconds.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "time"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "undo",
+      "description": "Undoes the last edits (yours or the user's). With redo=true, redoes instead.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "number"
+          },
+          "redo": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "save_project",
+      "description": "Saves the project to a .json file at an absolute path (overwrites it).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "export_video",
+      "description": "Renders the whole timeline to a file at an absolute path. format 'mp4' (H.264 + AAC) or 'mp3' (audio only). Can take a while for long videos; returns when the file is written.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "mp4",
+              "mp3"
+            ]
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "veryhigh"
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

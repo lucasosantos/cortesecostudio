@@ -2,7 +2,7 @@
 import {
   state, emit, subscribe, checkpoint, getClip, getTrack, getMedia, orderedTracks, projectDuration,
   addTrack, removeTrack, moveTrack, overlaps, rippleRemove, rippleInsert, insertionTime, findFreeSlot,
-  createClipFromMedia, createCompClip, trackKindFor, splitClip, removeClip, clipsOnTrack,
+  createClipFromMedia, createCompClip, trackKindFor, splitClip, removeClip, clipsOnTrack, snapshotKeyframes, restoreKeyframes,
 } from '../state/project.js';
 import { getComp } from '../motion/model.js';
 import { openComp } from './motion/actions.js';
@@ -11,23 +11,37 @@ import {
 } from '../state/keyframes.js';
 import { runtime, importFiles, isMissing } from '../media/library.js';
 import { seek } from '../engine/player.js';
-import { h, toast, clamp, formatTime } from './util.js';
+import { h, toast, clamp, formatTime, visibleWindow } from './util.js';
 import { icons } from './icons.js';
 import { saveSizes } from './layout.js';
-import { buildTransitionIndex, TRANSITIONS } from '../engine/compositor.js';
+import { openShortcuts } from './shortcuts.js';
+import { transitionIndexFor } from '../engine/compositor.js';
+import { transitionKnown, transitionLabel } from '../fx/registry.js';
+import { timed } from '../perf.js';
 
 const HEAD_W = 190;
-const CLIP_H = { visual: 56, audio: 50 }; // altura interna do clipe (row - 8)
+// altura da linha de cada track (ajustável arrastando a borda de baixo do cabeçalho; guardada em track.height)
+const ROW_H = { visual: 64, audio: 58 };
+export const ROW_MIN = 28;
+export const ROW_MAX = 260;
+export const rowHeight = (track) => clamp(Math.round(track?.height || ROW_H[track?.kind] || 64), ROW_MIN, ROW_MAX);
+const clipHeight = (track) => rowHeight(track) - 8; // altura interna do clipe
 const MEDIA_MIME = 'application/x-mineeditor-media';
 const COMP_MIME = 'application/x-mineeditor-comp';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-let root, scrollEl, contentEl, playheadEl, snapBtn, insertBtn;
+let root, scrollEl, contentEl, playheadEl, snapBtn, insertBtn, selectToolBtn, bladeToolBtn, bladeLine;
 let snapOn = true;
+let tool = 'select'; // 'select' (A) ou 'blade' (B: clicar num clipe corta ali)
+let bladeAt = null; // tempo sob o mouse com a ferramenta de corte
 let renderQueued = false;
 let drag = null;
 let dropHint = null; // { trackId | 'new' }
 let lastDown = { time: 0, x: 0, y: 0 };
+// faixa de tempo que tem elementos criados (o resto da timeline fica vazio até rolar para lá)
+let win = { t0: 0, t1: Infinity, x0: 0, x1: Infinity };
+// arrasto simples de um clipe na mesma track: só o elemento dele é atualizado, sem refazer a timeline
+let fastMove = false;
 
 export function initTimeline(el) {
   root = el;
@@ -35,17 +49,28 @@ export function initTimeline(el) {
   contentEl = h('div.tl-content');
   scrollEl.append(contentEl);
   playheadEl = h('div.playhead');
+  bladeLine = h('div.blade-line');
   root.append(resizer(), toolbar(), scrollEl);
 
   subscribe((reason) => {
     // no modo motion esta timeline fica oculta; ela é redesenhada ao voltar ('mode')
     if (reason.startsWith('motion') || state.mode !== 'edit') return;
     if (reason === 'time') updatePlayhead(true);
-    else if (reason !== 'play') queueRender();
+    else if (reason !== 'play') {
+      // qualquer outra mudança pede o redesenho completo (o arrasto religa o atalho depois do emit)
+      fastMove = false;
+      queueRender();
+    }
   });
 
   contentEl.addEventListener('pointerdown', onPointerDown);
+  contentEl.addEventListener('pointermove', onBladeHover);
+  contentEl.addEventListener('pointerleave', () => { bladeAt = null; bladeLine.remove(); });
   scrollEl.addEventListener('wheel', onWheel, { passive: false });
+  scrollEl.addEventListener('scroll', () => {
+    const x = scrollEl.scrollLeft;
+    if (x < win.x0 || x > win.x1) queueRender();
+  }, { passive: true });
   contentEl.addEventListener('dragover', onDragOver);
   contentEl.addEventListener('dragleave', () => setDropHint(null));
   contentEl.addEventListener('drop', onDrop);
@@ -60,14 +85,19 @@ function toolbar() {
     on: { click: () => { state.insertMode = !state.insertMode; insertBtn.classList.toggle('active', state.insertMode); } },
   }, 'Modo inserção');
   snapBtn = h('button.active', {
-    title: 'Ímã: encaixa nas bordas dos clipes e no playhead',
-    on: { click: () => { snapOn = !snapOn; snapBtn.classList.toggle('active', snapOn); } },
+    title: 'Ímã: encaixa nas bordas dos clipes e no playhead (N)',
+    on: { click: toggleSnap },
   }, 'Ímã');
+  selectToolBtn = h('button.active', { title: 'Seleção: arrastar, aparar e selecionar clipes (A)', on: { click: () => setTool('select') } }, 'Seleção');
+  bladeToolBtn = h('button', { title: 'Corte: clique num clipe para dividi-lo ali; Shift+clique corta todas as tracks (B)', on: { click: () => setTool('blade') } }, 'Corte');
   return h('div.tl-toolbar', {},
+    selectToolBtn,
+    bladeToolBtn,
+    h('div.sep'),
     h('button', { on: { click: () => { checkpoint(); addTrack('visual'); emit('project'); } } }, '+ Track de vídeo'),
     h('button', { on: { click: () => { checkpoint(); addTrack('audio'); emit('project'); } } }, '+ Track de áudio'),
     h('div.sep'),
-    h('button', { title: 'Dividir no playhead (S)', on: { click: splitAtPlayhead } }, 'Dividir'),
+    h('button', { title: 'Dividir no playhead (S ou Ctrl+B)', on: { click: splitAtPlayhead } }, 'Dividir'),
     h('button', { title: 'Excluir clipe (Delete)', on: { click: deleteSelected } }, 'Excluir'),
     h('div.sep'),
     insertBtn,
@@ -75,7 +105,8 @@ function toolbar() {
     h('div.sep'),
     h('button.icon', { title: 'Diminuir zoom (-)', on: { click: () => setZoom(state.zoom / 1.4) } }, '−'),
     h('button.icon', { title: 'Aumentar zoom (+)', on: { click: () => setZoom(state.zoom * 1.4) } }, '+'),
-    h('button', { title: 'Ajustar projeto à largura', on: { click: zoomToFit } }, 'Ajustar'),
+    h('button', { title: 'Ajustar projeto à largura (Shift+Z)', on: { click: zoomToFit } }, 'Ajustar'),
+    h('button', { title: 'Lista de atalhos do teclado (?)', on: { click: openShortcuts } }, 'Atalhos'),
     h('span.hint', { title: 'Arraste mídias para as tracks · Alt+arrastar reordena · Ctrl+clique na linha de volume cria keyframe' }, 'Arraste mídias para as tracks · Alt+arrastar reordena · Ctrl+clique na linha de volume cria keyframe'),
   );
 }
@@ -86,7 +117,9 @@ function resizer() {
     const startY = e.clientY;
     const startH = root.getBoundingClientRect().height;
     const move = (ev) => {
-      const hgt = clamp(startH - (ev.clientY - startY), 160, window.innerHeight - 260);
+      // com a timeline em cima, a alça fica na borda de baixo e o sentido inverte
+      const dir = document.body.classList.contains('tl-top') ? -1 : 1;
+      const hgt = clamp(startH - dir * (ev.clientY - startY), 120, window.innerHeight - 120);
       document.body.style.setProperty('--tl-h', hgt + 'px');
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); saveSizes(); };
@@ -109,6 +142,89 @@ export function splitAtPlayhead() {
   for (const c of targets) last = splitClip(c, t) || last;
   if (last && sel) state.selection = last.id;
   emit('project');
+}
+
+/** Ferramenta do timeline: 'select' (A) ou 'blade' (B). */
+export function setTool(next) {
+  tool = next === 'blade' ? 'blade' : 'select';
+  selectToolBtn?.classList.toggle('active', tool === 'select');
+  bladeToolBtn?.classList.toggle('active', tool === 'blade');
+  root?.classList.toggle('blade-mode', tool === 'blade');
+  if (tool !== 'blade') {
+    bladeAt = null;
+    bladeLine?.remove();
+  }
+}
+export const getTool = () => tool;
+
+/** Liga/desliga o ímã (N). */
+export function toggleSnap() {
+  snapOn = !snapOn;
+  snapBtn?.classList.toggle('active', snapOn);
+  toast(snapOn ? 'Ímã ligado' : 'Ímã desligado');
+}
+
+/** Tempo arredondado ao quadro mais próximo. */
+const toFrame = (t) => {
+  const fps = state.project.settings.fps || 30;
+  return Math.round(t * fps) / fps;
+};
+
+/** Clipes que uma ação "no playhead" afeta: o selecionado (se o playhead está nele) ou todos sob o playhead. */
+function clipsAtPlayhead(t) {
+  const sel = state.selection ? getClip(state.selection) : null;
+  if (sel && t > sel.start + 1e-6 && t < sel.start + sel.duration - 1e-6) return getTrack(sel.trackId)?.locked ? [] : [sel];
+  return state.project.clips.filter((c) => t > c.start + 1e-6 && t < c.start + c.duration - 1e-6 && !getTrack(c.trackId)?.locked);
+}
+
+/**
+ * Apaga a parte do clipe antes (Q, side 'left') ou depois (W, side 'right') do playhead.
+ * Com o Modo inserção ligado, os clipes seguintes da track andam para fechar o buraco.
+ */
+export function trimToPlayhead(side) {
+  const t = toFrame(state.time);
+  const targets = clipsAtPlayhead(t);
+  if (!targets.length) return toast('Posicione o playhead sobre um clipe');
+  checkpoint();
+  let keep = null;
+  for (const clip of targets) {
+    const right = splitClip(clip, t);
+    if (!right) continue;
+    if (side === 'left') {
+      // o pedaço que fica herda a entrada do clipe original
+      if (clip.animIn) right.animIn = clip.animIn;
+      if (clip.textAnim?.in) right.textAnim = { ...right.textAnim, in: clip.textAnim.in };
+      const gap = right.start - clip.start;
+      removeClip(clip.id);
+      if (state.insertMode) {
+        for (const c of clipsOnTrack(right.trackId)) if (c.start >= right.start - 1e-6) c.start -= gap;
+      }
+      keep = right;
+    } else {
+      if (right.animOut) clip.animOut = right.animOut;
+      if (right.textAnim?.out) clip.textAnim = { ...clip.textAnim, out: right.textAnim.out };
+      removeClip(right.id);
+      if (state.insertMode) rippleRemove(right);
+      keep = clip;
+    }
+  }
+  if (keep) state.selection = keep.id;
+  if (side === 'left' && state.insertMode && keep) seek(keep.start);
+  emit('project');
+}
+
+/** Pula para o corte anterior (-1) ou seguinte (+1): começos e fins dos clipes. */
+export function jumpToEdit(dir) {
+  const points = new Set([0, projectDuration()]);
+  for (const c of state.project.clips) {
+    if (getTrack(c.trackId)?.hidden) continue;
+    points.add(c.start);
+    points.add(c.start + c.duration);
+  }
+  const t = state.time;
+  const list = [...points].sort((a, b) => a - b);
+  const next = dir > 0 ? list.find((p) => p > t + 1e-4) : [...list].reverse().find((p) => p < t - 1e-4);
+  if (next !== undefined) seek(next);
 }
 
 export function deleteSelected(ripple = false) {
@@ -173,7 +289,7 @@ function setZoom(z, anchorClientX) {
 export function zoomIn() { setZoom(state.zoom * 1.4); }
 export function zoomOut() { setZoom(state.zoom / 1.4); }
 
-function zoomToFit() {
+export function zoomToFit() {
   const dur = Math.max(5, projectDuration());
   state.zoom = clamp((scrollEl.clientWidth - HEAD_W - 40) / dur, 4, 800);
   render();
@@ -196,7 +312,26 @@ function queueRender() {
   renderQueued = true;
   requestAnimationFrame(() => {
     renderQueued = false;
+    if (fastMove && patchDraggedClip()) return;
     render();
+  });
+}
+
+/** Move só o elemento do clipe arrastado (e a linha do ímã). @returns false se precisa do redesenho completo */
+function patchDraggedClip() {
+  const clip = drag?.clip;
+  const el = clip && contentEl.querySelector(`.clip[data-clip-id="${clip.id}"]`);
+  if (!el || !el.classList.contains('dragging') || el.closest('.tl-row')?.dataset.trackId !== clip.trackId) return false;
+  return timed('timelineFast', () => {
+    el.style.left = clip.start * state.zoom + 'px';
+    el.classList.toggle('invalid', !!drag.invalid);
+    let line = contentEl.querySelector('.snap-line');
+    if (drag.snapAt == null) line?.remove();
+    else {
+      if (!line) contentEl.append((line = h('div.snap-line')));
+      line.style.left = HEAD_W + drag.snapAt * state.zoom + 'px';
+    }
+    return true;
   });
 }
 
@@ -206,6 +341,10 @@ function tickInterval(zoom) {
 }
 
 function render() {
+  timed('timeline', renderNow);
+}
+
+function renderNow() {
   if (!contentEl) return;
   const zoom = state.zoom;
   const dur = projectDuration();
@@ -214,8 +353,9 @@ function render() {
   const laneW = Math.ceil(totalSec * zoom);
   contentEl.style.width = HEAD_W + laneW + 'px';
 
+  win = visibleWindow(scrollEl.scrollLeft, scrollEl.clientWidth, zoom, HEAD_W);
   const major = tickInterval(zoom);
-  const tIndex = buildTransitionIndex(state.project);
+  const tIndex = transitionIndexFor(state.project, state.rev);
   const rows = orderedTracks().map((tr) => trackRow(tr, major, tIndex));
   const newZone = h(`div.tl-new-track-zone${dropHint === 'new' ? '.drop-target' : ''}`, { dataset: { newTrack: '1' } },
     'Solte aqui para criar uma nova track');
@@ -228,14 +368,19 @@ function render() {
   if (drag?.snapAt != null) {
     contentEl.append(h('div.snap-line', { style: { left: HEAD_W + drag.snapAt * zoom + 'px' } }));
   }
+  if (tool === 'blade' && bladeAt != null) {
+    bladeLine.style.left = HEAD_W + bladeAt * zoom + 'px';
+    contentEl.append(bladeLine);
+  }
   updatePlayhead(false);
 }
 
 function ruler(totalSec, major) {
   const ticks = h('div.tl-ticks');
   const minor = major / (major >= 1 ? 5 : 2);
-  const n = Math.ceil(totalSec / minor);
-  for (let i = 0; i <= n; i++) {
+  // só as marcas da faixa visível: com zoom alto a régua inteira teria dezenas de milhares
+  const n = Math.min(Math.ceil(totalSec / minor), Math.ceil(win.t1 / minor));
+  for (let i = Math.floor(win.t0 / minor); i <= n; i++) {
     const t = i * minor;
     const isMajor = Math.abs(t / major - Math.round(t / major)) < 1e-6;
     const tick = h(`div.tick${isMajor ? '.major' : ''}`, { style: { left: t * state.zoom + 'px' } });
@@ -247,15 +392,19 @@ function ruler(totalSec, major) {
 
 function trackRow(track, major, tIndex) {
   const isAudio = track.kind === 'audio';
-  const cls = `div.tl-row${isAudio ? '.audio' : ''}${track.locked ? '.locked' : ''}${track.hidden ? '.hidden-track' : ''}`;
+  const rowH = rowHeight(track);
+  // linhas baixas: nome e botões lado a lado; muito baixas: só o nome
+  const cls = `div.tl-row${isAudio ? '.audio' : ''}${track.locked ? '.locked' : ''}${track.hidden ? '.hidden-track' : ''}${rowH < 52 ? '.compact' : ''}${rowH < 34 ? '.tiny' : ''}`;
   const lane = h(`div.tl-lane${dropHint === track.id ? '.drop-target' : ''}`, { style: { '--grid': major * state.zoom + 'px' } });
   const clips = clipsOnTrack(track.id);
-  for (const clip of clips) lane.append(clipEl(clip, track, tIndex));
+  // fora da faixa visível só ficam o clipe selecionado e o que está sendo arrastado
+  const shown = (c) => (c.start < win.t1 && c.start + c.duration > win.t0) || c.id === state.selection || c.id === drag?.clip?.id;
+  for (const clip of clips) if (shown(clip)) lane.append(clipEl(clip, track, tIndex));
   if (!isAudio) {
     const zoom = state.zoom;
     for (const tr of tIndex.transitions) {
-      if (tr.trackId !== track.id) continue;
-      const name = TRANSITIONS[tr.spec.type];
+      if (tr.trackId !== track.id || tr.from > win.t1 || tr.to < win.t0) continue;
+      const name = transitionLabel(tr.spec.type);
       lane.append(h(`div.trans${tr.in.id === state.selection ? '.selected' : ''}`, {
         dataset: { clipId: tr.in.id },
         title: `Transição: ${name} (${tr.spec.duration}s) — clique para editar`,
@@ -266,11 +415,11 @@ function trackRow(track, major, tIndex) {
     for (let i = 1; i < clips.length; i++) {
       const a = clips[i - 1];
       const b = clips[i];
-      if (b.transition || Math.abs(a.start + a.duration - b.start) > 0.02) continue;
+      if (b.start < win.t0 || b.start > win.t1 || b.transition || Math.abs(a.start + a.duration - b.start) > 0.02) continue;
       lane.append(h('button.trans-add', { dataset: { clipId: b.id }, title: 'Adicionar transição neste corte', style: { left: b.start * zoom + 'px' } }, '⧓'));
     }
   }
-  return h(cls, { dataset: { trackId: track.id } }, trackHead(track), lane);
+  return h(cls, { dataset: { trackId: track.id }, style: { '--row-h': rowH + 'px' } }, trackHead(track), lane);
 }
 
 function iconBtn(html, title, on, onClick) {
@@ -302,7 +451,44 @@ function trackHead(track) {
       emit('project');
     }),
   );
-  return h('div.tl-head', {}, h('div.name', {}, h('span.dot'), nameInput), btns);
+  const grip = h('div.row-resize', { title: 'Arraste para mudar a altura desta track (duplo clique volta ao padrão)', on: { pointerdown: (e) => resizeRow(e, track, grip) } });
+  return h('div.tl-head', {}, h('div.name', {}, h('span.dot'), nameInput), btns, grip);
+}
+
+/** Arrasta a borda de baixo do cabeçalho para mudar a altura da track. */
+let lastGripDown = 0;
+function resizeRow(e, track, grip) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const now = performance.now();
+  if (now - lastGripDown < 400) {
+    // duplo clique: volta à altura padrão
+    lastGripDown = 0;
+    if (track.height) { checkpoint(); delete track.height; emit('project'); }
+    return;
+  }
+  lastGripDown = now;
+  const row = grip.closest('.tl-row');
+  const startY = e.clientY;
+  const startH = rowHeight(track);
+  let next = startH;
+  grip.classList.add('dragging');
+  const move = (ev) => {
+    next = clamp(startH + ev.clientY - startY, ROW_MIN, ROW_MAX);
+    // durante o arrasto só a linha muda de altura; o conteúdo é refeito ao soltar
+    row.style.setProperty('--row-h', next + 'px');
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    grip.classList.remove('dragging');
+    if (next === startH) return;
+    checkpoint();
+    track.height = next;
+    emit('project');
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up, { once: true });
 }
 
 function clipEl(clip, track, tIndex) {
@@ -339,15 +525,15 @@ function clipEl(clip, track, tIndex) {
     const k = both > clip.duration ? clip.duration / both : 1;
     for (const [key, cls] of [['animIn', 'in'], ['animOut', 'out']]) {
       const spec = clip[key];
-      if (!spec || !TRANSITIONS[spec.type]) continue;
+      if (!spec || !transitionKnown(spec.type)) continue;
       const ignored = tIndex && (key === 'animIn' ? !tIndex.hasIn(clip) : !tIndex.hasOut(clip));
       el.append(h(`div.anim.${cls}${ignored ? '.ignored' : ''}`, { style: { width: Math.max(4, spec.duration * k * zoom) + 'px' } },
-        h('span', {}, TRANSITIONS[spec.type] + (ignored ? ' (ignorada)' : ''))));
+        h('span', {}, transitionLabel(spec.type) + (ignored ? ' (ignorada)' : ''))));
     }
   }
 
   const hasAudio = clip.type === 'audio' || (clip.type === 'video' && media?.hasAudio && !clip.audioDetached);
-  if (hasAudio && (clip.type === 'audio' || selected)) el.append(envelope(clip, w, CLIP_H[track.kind]));
+  if (hasAudio && (clip.type === 'audio' || selected)) el.append(envelope(clip, w, clipHeight(track)));
 
   if (selected) {
     const kfs = h('div.kfs');
@@ -482,6 +668,7 @@ function onPointerDown(e) {
 
   const clip = getClip(clipNode.dataset.clipId);
   if (!clip) return;
+  if (tool === 'blade') return bladeCut(e, clip);
   if (state.selection !== clip.id) {
     state.selection = clip.id;
     emit('selection');
@@ -489,11 +676,11 @@ function onPointerDown(e) {
   const track = getTrack(clip.trackId);
   if (track?.locked) return;
   const clipRect = clipNode.getBoundingClientRect();
-  const H = CLIP_H[track.kind];
+  const H = clipHeight(track);
   const base = { clip, x0: e.clientX, y0: e.clientY, clipTop: clipRect.top, H };
 
   if (target.classList.contains('handle')) {
-    return beginDrag(e, { ...base, type: 'trim', side: target.dataset.side, orig: { start: clip.start, duration: clip.duration, inPoint: clip.inPoint, keyframes: JSON.stringify(clip.keyframes || {}) } });
+    return beginDrag(e, { ...base, type: 'trim', side: target.dataset.side, orig: { start: clip.start, duration: clip.duration, inPoint: clip.inPoint, keyframes: snapshotKeyframes(clip) } });
   }
   if (target.tagName === 'circle') {
     const t = Number(target.dataset.t);
@@ -517,6 +704,41 @@ function onPointerDown(e) {
     return beginDrag(e, { ...base, type: 'kf', current: t, from: t });
   }
   beginDrag(e, { ...base, type: 'move', orig: { start: clip.start, trackId: clip.trackId } });
+}
+
+/** Tempo do corte sob o mouse: encaixa no playhead e nas bordas com o ímã, e no quadro. */
+function bladeTime(clientX) {
+  const raw = Math.max(0, timeAt(clientX));
+  const s = snap(raw, snapCandidates(null));
+  return toFrame(s.value);
+}
+
+function bladeCut(e, clip) {
+  e.preventDefault();
+  const t = bladeTime(e.clientX);
+  // Shift+clique: corta todas as tracks naquele instante
+  const targets = e.shiftKey
+    ? state.project.clips.filter((c) => t > c.start + 1e-6 && t < c.start + c.duration - 1e-6 && !getTrack(c.trackId)?.locked)
+    : getTrack(clip.trackId)?.locked ? [] : [clip];
+  if (!targets.length) return;
+  checkpoint();
+  let cut = false;
+  for (const c of targets) cut = !!splitClip(c, t) || cut;
+  if (!cut) return toast('Muito perto da borda do clipe para cortar');
+  state.selection = clip.id;
+  emit('project');
+}
+
+function onBladeHover(e) {
+  if (tool !== 'blade' || drag) return;
+  if (!e.target.closest('.tl-lane, .clip')) {
+    bladeAt = null;
+    bladeLine.remove();
+    return;
+  }
+  bladeAt = bladeTime(e.clientX);
+  bladeLine.style.left = HEAD_W + bladeAt * state.zoom + 'px';
+  if (!bladeLine.isConnected) contentEl.append(bladeLine);
 }
 
 function beginDrag(e, d) {
@@ -554,6 +776,10 @@ function onPointerMove(e) {
     drag.insert = state.insertMode || e.altKey;
     drag.insertAt = drag.insert ? insertionTime(clip.trackId, start, clip.id) : null;
     drag.invalid = !drag.insert && overlaps(clip.trackId, start, start + clip.duration, clip.id);
+    emit('project');
+    // sem modo inserção (que desenha o marcador de encaixe), basta mover o elemento do clipe
+    fastMove = !drag.insert;
+    return;
   } else if (drag.type === 'trim') {
     trimDrag(clip, dx / zoom);
   } else if (drag.type === 'env-point') {
@@ -599,8 +825,7 @@ function trimDrag(clip, dt) {
     clip.start = start;
     clip.duration = o.duration - d;
     clip.inPoint = av ? o.inPoint + d : 0;
-    clip.keyframes = JSON.parse(o.keyframes);
-    shiftKeyframes(clip, -d);
+    restoreKeyframes(clip, o.keyframes, -d);
   }
 }
 

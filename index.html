@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: data: ws: http://localhost:*; font-src 'self' data:"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: media:; media-src 'self' blob: media:; worker-src 'self' blob:; connect-src 'self' blob: data: media: ws: http://localhost:*; font-src 'self' data:"
     />
     <title>CorteSeco Studio</title>
   </head>
@@ -13,34 +13,30 @@
     <header class="topbar">
       <div class="brand">CorteSeco<span> Studio</span></div>
       <div class="group">
-        <button data-action="new" data-icon="new" title="Novo projeto">Novo</button>
-        <button data-action="open" data-icon="open" title="Abrir projeto (Ctrl+O)">Abrir</button>
-        <button data-action="save" data-icon="save" title="Salvar projeto (Ctrl+S)">Salvar</button>
+        <button data-action="new" data-icon="new" class="icon" title="Novo projeto" aria-label="Novo projeto"></button>
+        <button data-action="open" data-icon="open" class="icon" title="Abrir projeto (Ctrl+O)" aria-label="Abrir projeto"></button>
+        <button data-action="save" data-icon="save" class="icon" title="Salvar projeto (Ctrl+S)" aria-label="Salvar projeto"></button>
       </div>
       <div class="group">
         <button data-action="undo" data-icon="undo" class="icon" title="Desfazer (Ctrl+Z)" aria-label="Desfazer"></button>
         <button data-action="redo" data-icon="redo" class="icon" title="Refazer (Ctrl+Shift+Z)" aria-label="Refazer"></button>
       </div>
       <div class="group">
-        <button data-action="import" data-icon="media" title="Importar vídeo, áudio ou imagem">Mídia</button>
-        <button data-action="add-text" data-icon="text" class="edit-only" title="Adicionar texto no playhead">Texto</button>
-        <button data-action="new-comp" data-icon="comp" title="Nova composição de motion design">Composição</button>
+        <button data-action="import" data-icon="media" class="icon" title="Mídia: importar vídeo, áudio ou imagem (Ctrl+I)" aria-label="Importar mídia"></button>
+        <button data-action="add-text" data-icon="text" class="icon edit-only" title="Texto: adicionar no playhead (T)" aria-label="Adicionar texto"></button>
+        <button data-action="new-comp" data-icon="comp" class="icon" title="Composição: nova composição de motion design" aria-label="Nova composição"></button>
+        <button data-action="extensions" data-icon="keyframe" class="icon" title="Extensões: efeitos e transições (instalar, criar em código e compartilhar)" aria-label="Extensões"></button>
+        <button data-action="ai" data-icon="sparkle" class="icon ai-btn" title="IA: conectar o Claude (ou outra IA via MCP) a este editor" aria-label="IA"></button>
+        <button data-action="performance" data-icon="gauge" class="icon" title="Desempenho: qualidade do preview, placa de vídeo e arquivos proxy" aria-label="Desempenho"></button>
       </div>
-      <div class="group mode-tabs" title="Alternar entre a timeline do vídeo e o workspace de motion design">
-        <button data-action="mode-edit" data-icon="edit" id="mode-edit" class="active">Edição</button>
-        <button data-action="mode-motion" data-icon="motion" id="mode-motion">Motion</button>
+      <div class="group mode-tabs">
+        <button data-action="mode-edit" data-icon="edit" id="mode-edit" class="icon active" title="Edição: a timeline do vídeo" aria-label="Edição"></button>
+        <button data-action="mode-motion" data-icon="motion" id="mode-motion" class="icon" title="Motion: o workspace de motion design" aria-label="Motion"></button>
       </div>
       <div class="spacer"></div>
-      <label class="layout-pick" title="Layout da interface">
-        <select id="layout-select" class="layout-select">
-          <option value="classic">Layout: Padrão</option>
-          <option value="vertical-right">Layout: Vertical (preview à direita)</option>
-          <option value="vertical-left">Layout: Vertical (preview à esquerda)</option>
-          <option value="timeline">Layout: Timeline grande</option>
-        </select>
-      </label>
+      <button data-action="panels" data-icon="layout" id="panels-btn" class="icon" title="Painéis: mostrar, ocultar e mover as partes da interface" aria-label="Painéis"></button>
       <button class="settings-chip" data-action="settings" data-icon="settings" title="Dimensões e FPS do projeto"><span id="settings-label">1920×1080 · 30fps</span></button>
-      <button class="primary" data-action="export" data-icon="export">Exportar</button>
+      <button class="primary icon" data-action="export" data-icon="export" title="Exportar (Ctrl+E)" aria-label="Exportar"></button>
     </header>
 
     <main class="workspace">

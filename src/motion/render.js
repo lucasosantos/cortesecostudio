@@ -3,8 +3,9 @@
 import { measureText } from '../state/project.js';
 import { drawText } from '../engine/text.js';
 import { cssColor } from './interp.js';
-import { shapePath, trace, traceContour, contourLength, trimDash } from './geometry.js';
-import { layerPropsAt, worldMatrix, layerActive, getLayer } from './model.js';
+import { shapePath, trace, traceContour, contourLength, trimDash, mul, apply } from './geometry.js';
+import { layerPropsAt, worldMatrix, layerActive, getLayer, localBounds } from './model.js';
+import { hasFx, drawFx, animationAt } from '../fx/apply.js';
 
 const scratch = [];
 /** Canvas auxiliar do tamanho do destino (usado pelos mattes). */
@@ -76,10 +77,71 @@ export function drawLayer(ctx, frame, layer) {
   const opacity = Math.max(0, Math.min(1, p.opacity));
   if (opacity <= 0) return;
   const m = worldMatrix(frame.comp, layer, frame.t, frame.cache);
+  const anim = layer.animIn || layer.animOut ? animationAt(layer, frame.t - layer.in, layer.out - layer.in) : null;
+  if (hasFx(layer) || anim) return drawLayerFx(ctx, frame, layer, p, m, opacity, anim);
   ctx.save();
   ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
   ctx.globalAlpha *= opacity;
+  paintLayer(ctx, frame, layer, p);
+  ctx.restore();
+}
 
+/**
+ * Camada com efeitos: é renderizada sozinha num canvas do tamanho da sua caixa na tela,
+ * passa pelos efeitos e volta para o destino.
+ */
+function drawLayerFx(ctx, frame, layer, p, m, opacity, anim = null) {
+  const T = ctx.getTransform();
+  const device = [T.a, T.b, T.c, T.d, T.e, T.f];
+  const full = mul(device, m);
+  const b = localBounds(layer, p);
+  // o traço passa metade da espessura para fora da caixa
+  const pad = layer.type === 'shape' && layer.strokeOn ? (p.strokeWidth || 0) / 2 + 1 : 0;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [u, v] of [[b.x - pad, b.y - pad], [b.x + b.w + pad, b.y - pad], [b.x + b.w + pad, b.y + b.h + pad], [b.x - pad, b.y + b.h + pad]]) {
+    const [x, y] = apply(full, u, v);
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x);
+    y1 = Math.max(y1, y);
+  }
+  x0 = Math.max(0, Math.floor(x0) - 2);
+  y0 = Math.max(0, Math.floor(y0) - 2);
+  x1 = Math.min(ctx.canvas.width, Math.ceil(x1) + 2);
+  y1 = Math.min(ctx.canvas.height, Math.ceil(y1) + 2);
+  if (!(x1 > x0 && y1 > y0)) return;
+  const span = Math.max(1e-6, layer.out - layer.in);
+  drawFx(layer, {
+    t: frame.t,
+    progress: Math.max(0, Math.min(1, (frame.t - layer.in) / span)),
+    width: x1 - x0,
+    height: y1 - y0,
+    scale: Math.sqrt(Math.abs(device[0] * device[3] - device[1] * device[2])) || 1,
+    anim,
+    paint(c) {
+      c.translate(-x0, -y0);
+      c.transform(full[0], full[1], full[2], full[3], full[4], full[5]);
+      paintLayer(c, frame, layer, p);
+    },
+    place(img, filter, r) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha *= opacity;
+      ctx.filter = filter;
+      const w = x1 - x0;
+      const hh = y1 - y0;
+      ctx.drawImage(img, x0 + r.x * w, y0 + r.y * hh, r.w * w, r.h * hh);
+      ctx.filter = 'none';
+      ctx.restore();
+    },
+  });
+}
+
+/** Desenha o conteúdo da camada em coordenadas locais (transformação e opacidade já aplicadas por quem chama). */
+function paintLayer(ctx, frame, layer, p) {
   if (layer.type === 'shape') {
     const path = shapePath(layer, p);
     if (layer.fillOn) {
@@ -91,12 +153,11 @@ export function drawLayer(ctx, frame, layer) {
     if (layer.strokeOn && p.strokeWidth > 0) strokePath(ctx, path, layer, p);
   } else if (layer.type === 'text') {
     const size = measureText(layer);
-    drawText(ctx, layer, 0, 0, size.w, size.h);
+    drawText(ctx, layer, 0, 0, size.w, size.h, { t: frame.t - layer.in, span: layer.out - layer.in });
   } else if (layer.type === 'image') {
     const src = frame.getSource?.({ type: 'image', mediaId: layer.mediaId, id: layer.id });
     if (src) ctx.drawImage(src, 0, 0, p.w, p.h);
   }
-  ctx.restore();
 }
 
 function strokePath(ctx, path, layer, p) {

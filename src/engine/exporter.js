@@ -1,15 +1,15 @@
 // Exportação: MP4 (H.264 + AAC) ou WebM (fallback) e MP3 somente áudio.
 import {
-  Output, BufferTarget, Mp4OutputFormat, WebMOutputFormat, Mp3OutputFormat,
-  CanvasSource, AudioBufferSource, Input, BlobSource, ALL_FORMATS, CanvasSink,
+  Output, BufferTarget, StreamTarget, Mp4OutputFormat, WebMOutputFormat, Mp3OutputFormat,
+  CanvasSource, AudioBufferSource, CanvasSink,
   canEncodeVideo, canEncodeAudio, QUALITY_HIGH, QUALITY_MEDIUM, QUALITY_LOW, QUALITY_VERY_HIGH,
 } from 'mediabunny';
 import { registerMp3Encoder } from '@mediabunny/mp3-encoder';
 import { registerAacEncoder } from '@mediabunny/aac-encoder';
 import { drawFrame, visibleClipsAt, buildTransitionIndex } from './compositor.js';
-import { mixProjectAudio, sliceAudioBuffer } from './audioMixer.js';
-import { runtime } from '../media/library.js';
-import { projectDuration } from '../state/project.js';
+import { mixProjectAudioBlocks } from './audioMixer.js';
+import { runtime, openInput } from '../media/library.js';
+import { projectDuration, state, emit } from '../state/project.js';
 
 const QUALITIES = { low: QUALITY_LOW, medium: QUALITY_MEDIUM, high: QUALITY_HIGH, veryhigh: QUALITY_VERY_HIGH };
 
@@ -17,37 +17,67 @@ export class ExportCanceled extends Error {}
 
 /**
  * Exporta o projeto.
- * @param opts { format: 'mp4'|'mp3', quality, onProgress(fraction, label), signal: { canceled } }
- * @returns { data: ArrayBuffer, extension, mimeType, note? }
+ * @param opts {
+ *   format: 'mp4'|'mp3', quality, onProgress(fraction, label), signal: { canceled },
+ *   writer   opcional { write(bytes, posição) }: grava o arquivo aos poucos (desktop) em vez de montá-lo na memória
+ *   hardware opcional: pede o codificador de vídeo da placa (cai no de software se não houver)
+ *   fast     opcional: codificação mais rápida, com um pouco menos de qualidade
+ * }
+ * @returns { data: ArrayBuffer | null (null quando gravou pelo writer), bytes, extension, mimeType, note? }
  */
 export async function exportProject(project, opts) {
   const duration = projectDuration(project);
   if (duration <= 0) throw new Error('A timeline está vazia.');
   // snapshot para que edições durante a exportação não afetem o resultado
   project = JSON.parse(JSON.stringify(project));
-  return opts.format === 'mp3' ? exportMp3(project, duration, opts) : exportVideo(project, duration, opts);
+  // o preview fica parado enquanto exporta, para não disputar processador e placa de vídeo
+  state.exporting = true;
+  try {
+    return await (opts.format === 'mp3' ? exportMp3(project, duration, opts) : exportVideo(project, duration, opts));
+  } finally {
+    state.exporting = false;
+    emit('time');
+  }
+}
+
+/** Extensão do arquivo que a exportação vai gerar (para escolher o nome antes de começar). */
+export async function exportExtension(project, format) {
+  if (format === 'mp3') return 'mp3';
+  const { width, height } = project.settings;
+  return (await pickVideoCodecs(width, height)).container;
+}
+
+/** Destino da saída: o arquivo em disco (aos poucos) ou a memória. Conta os bytes gravados. */
+function makeTarget(writer) {
+  if (!writer) return { target: new BufferTarget(), size: (target) => target.buffer?.byteLength || 0 };
+  let end = 0;
+  const stream = new WritableStream({
+    async write(chunk) {
+      await writer.write(chunk.data, chunk.position);
+      end = Math.max(end, chunk.position + chunk.data.byteLength);
+    },
+  });
+  return { target: new StreamTarget(stream, { chunked: true, chunkSize: 4 * 1024 * 1024 }), size: () => end };
 }
 
 function check(signal) {
   if (signal?.canceled) throw new ExportCanceled('Exportação cancelada');
 }
 
-async function exportMp3(project, duration, { quality = 'high', onProgress, signal }) {
+async function exportMp3(project, duration, { quality = 'high', onProgress, signal, writer }) {
   if (!(await canEncodeAudio('mp3'))) registerMp3Encoder();
-  onProgress?.(0, 'Mixando áudio…');
-  const mix = await mixProjectAudio(project, duration, (f) => onProgress?.(f * 0.4, 'Mixando áudio…'));
-  check(signal);
-
-  const output = new Output({ format: new Mp3OutputFormat(), target: new BufferTarget() });
+  onProgress?.(0, 'Codificando MP3…');
+  const out = makeTarget(writer);
+  const output = new Output({ format: new Mp3OutputFormat(), target: out.target });
   const bitrates = { low: 128000, medium: 160000, high: 192000, veryhigh: 320000 };
   const source = new AudioBufferSource({ codec: 'mp3', bitrate: bitrates[quality] || 192000 });
   output.addAudioTrack(source);
   await output.start();
   try {
-    for (const { buffer, start } of sliceAudioBuffer(mix, 5)) {
+    for await (const { buffer, start } of mixProjectAudioBlocks(project, duration)) {
       check(signal);
       await source.add(buffer);
-      onProgress?.(0.4 + 0.6 * (start / duration), 'Codificando MP3…');
+      onProgress?.(Math.min(0.99, (start + buffer.duration) / duration), 'Codificando MP3…');
     }
     source.close();
     await output.finalize();
@@ -56,7 +86,7 @@ async function exportMp3(project, duration, { quality = 'high', onProgress, sign
     throw e;
   }
   onProgress?.(1, 'Concluído');
-  return { data: output.target.buffer, extension: 'mp3', mimeType: 'audio/mpeg' };
+  return { data: writer ? null : output.target.buffer, bytes: out.size(output.target), extension: 'mp3', mimeType: 'audio/mpeg' };
 }
 
 let aacReady = null;
@@ -89,28 +119,35 @@ async function pickVideoCodecs(width, height) {
   throw new Error('Este ambiente não suporta codificação de vídeo (WebCodecs).');
 }
 
-async function exportVideo(project, duration, { quality = 'high', onProgress, signal }) {
+async function exportVideo(project, duration, { quality = 'high', onProgress, signal, writer, hardware = false, fast = false }) {
   const { width: W, height: H, fps } = project.settings;
   const codecs = await pickVideoCodecs(W, H);
   const q = QUALITIES[quality] || QUALITY_HIGH;
 
-  // 1) áudio
-  onProgress?.(0, 'Mixando áudio…');
+  // 1) áudio: mixado em blocos, à medida que o vídeo avança
+  onProgress?.(0, 'Preparando…');
   const hasAudio = codecs.audio && project.clips.some((c) => c.type === 'audio' || c.type === 'video');
-  const mix = hasAudio ? await mixProjectAudio(project, duration, (f) => onProgress?.(f * 0.1, 'Mixando áudio…')) : null;
+  const audioBlocks = hasAudio ? mixProjectAudioBlocks(project, duration, { blockSeconds: 2 }) : null;
   check(signal);
 
-  // 2) saída
+  // 2) saída (gravando em disco, o índice do MP4 vai no fim do arquivo para nada ficar retido na memória)
+  const out = makeTarget(writer);
   const output = new Output({
-    format: codecs.container === 'mp4' ? new Mp4OutputFormat({ fastStart: 'in-memory' }) : new WebMOutputFormat(),
-    target: new BufferTarget(),
+    format: codecs.container === 'mp4' ? new Mp4OutputFormat({ fastStart: writer ? false : 'in-memory' }) : new WebMOutputFormat(),
+    target: out.target,
   });
   const canvas = new OffscreenCanvas(W, H);
   const ctx = canvas.getContext('2d', { alpha: false });
-  const videoSource = new CanvasSource(canvas, { codec: codecs.video, quality: q, keyFrameInterval: 2 });
+  // o codificador da placa só é pedido se este ambiente confirmar que tem um
+  const useHw = hardware && (await canEncodeVideo(codecs.video, { width: W, height: H, hardwareAcceleration: 'prefer-hardware' }).catch(() => false));
+  const videoSource = new CanvasSource(canvas, {
+    codec: codecs.video, quality: q, keyFrameInterval: 2,
+    ...(fast ? { latencyMode: 'realtime' } : {}),
+    ...(useHw ? { hardwareAcceleration: 'prefer-hardware' } : {}),
+  });
   output.addVideoTrack(videoSource, { frameRate: fps });
   let audioSource = null;
-  if (mix) {
+  if (audioBlocks) {
     audioSource = new AudioBufferSource({ codec: codecs.audio, quality: q });
     output.addAudioTrack(audioSource);
   }
@@ -138,10 +175,9 @@ async function exportVideo(project, duration, { quality = 'high', onProgress, si
   async function decoderFor(clip) {
     let d = decoders.get(clip.id);
     if (d) return d;
-    const rt = runtime.get(clip.mediaId);
     d = { iter: null, current: null };
-    if (rt?.blob) {
-      const input = new Input({ source: new BlobSource(rt.blob), formats: ALL_FORMATS });
+    const input = openInput(clip.mediaId);
+    if (input) {
       inputs.push(input);
       const vt = await input.getPrimaryVideoTrack();
       if (vt && (await vt.canDecode())) {
@@ -154,8 +190,7 @@ async function exportVideo(project, duration, { quality = 'high', onProgress, si
     return d;
   }
 
-  const audioChunks = mix ? sliceAudioBuffer(mix, 2) : null;
-  let nextAudio = audioChunks?.next();
+  let nextAudio = audioBlocks ? await audioBlocks.next() : null;
 
   try {
     for (let n = 0; n < totalFrames; n++) {
@@ -181,7 +216,7 @@ async function exportVideo(project, duration, { quality = 'high', onProgress, si
       // intercala o áudio com o vídeo
       while (nextAudio && !nextAudio.done && nextAudio.value.start <= t + 1) {
         await audioSource.add(nextAudio.value.buffer);
-        nextAudio = audioChunks.next();
+        nextAudio = await audioBlocks.next();
       }
       // libera decodificadores de clipes que já terminaram
       for (const [id, d] of decoders) {
@@ -192,11 +227,11 @@ async function exportVideo(project, duration, { quality = 'high', onProgress, si
           d.current = null;
         }
       }
-      onProgress?.(0.1 + 0.88 * ((n + 1) / totalFrames), `Renderizando frame ${n + 1} de ${totalFrames}`);
+      onProgress?.(0.98 * ((n + 1) / totalFrames), `Renderizando frame ${n + 1} de ${totalFrames}`);
     }
     while (nextAudio && !nextAudio.done) {
       await audioSource.add(nextAudio.value.buffer);
-      nextAudio = audioChunks.next();
+      nextAudio = await audioBlocks.next();
     }
     videoSource.close();
     audioSource?.close();
@@ -206,6 +241,7 @@ async function exportVideo(project, duration, { quality = 'high', onProgress, si
     await output.cancel().catch(() => {});
     throw e;
   } finally {
+    await audioBlocks?.return?.();
     for (const d of decoders.values()) await d.iter?.return?.();
     for (const i of inputs) i.dispose?.();
   }
@@ -213,7 +249,8 @@ async function exportVideo(project, duration, { quality = 'high', onProgress, si
   onProgress?.(1, 'Concluído');
   const ext = codecs.container;
   return {
-    data: output.target.buffer,
+    data: writer ? null : output.target.buffer,
+    bytes: out.size(output.target),
     extension: ext,
     mimeType: ext === 'mp4' ? 'video/mp4' : 'video/webm',
     note: ext !== 'mp4' ? 'H.264/MP4 não está disponível neste ambiente; o vídeo foi exportado em WebM.' : null,

@@ -1,7 +1,8 @@
 // Biblioteca de mídia: importação, metadados, thumbnails, waveforms e decodificação de áudio.
-import { Input, BlobSource, ALL_FORMATS, CanvasSink, AudioBufferSink } from 'mediabunny';
+import { Input, BlobSource, UrlSource, ALL_FORMATS, CanvasSink, AudioBufferSink } from 'mediabunny';
 import { state, uid, emit } from '../state/project.js';
-import { pathForFile } from '../platform/index.js';
+import { pathForFile, mediaUrlFor, readFileByPath } from '../platform/index.js';
+import { createPeaks, addSamples } from './peaks.js';
 import { removeLayersUsingMedia } from '../motion/model.js';
 
 /** Dados de runtime (não serializados), por id de mídia. */
@@ -21,7 +22,23 @@ function guessType(name, mime = '') {
   return null;
 }
 
-export const isMissing = (mediaId) => !runtime.get(mediaId)?.blob;
+/** A mídia não tem arquivo associado (precisa ser localizada de novo)? */
+export const isMissing = (mediaId) => {
+  const rt = runtime.get(mediaId);
+  return !rt || !(rt.blob || rt.remote);
+};
+
+/** Fonte de leitura do Mediabunny para a mídia: o arquivo em memória/disco (Blob) ou a URL (lida aos pedaços). */
+export function inputSource(rt) {
+  return rt.blob ? new BlobSource(rt.blob) : new UrlSource(rt.url);
+}
+
+/** Abre a mídia para leitura (quem chama faz dispose()). Retorna null se ela está ausente. */
+export function openInput(mediaId) {
+  const rt = runtime.get(mediaId);
+  if (!rt || !(rt.blob || rt.remote)) return null;
+  return new Input({ source: inputSource(rt), formats: ALL_FORMATS });
+}
 
 /** Importa arquivos (File[]) para a biblioteca do projeto. */
 export async function importFiles(files) {
@@ -45,14 +62,83 @@ export async function importFiles(files) {
 }
 
 /** Associa um Blob a uma entrada de mídia, lendo metadados e gerando prévias. */
-export async function attachBlob(media, blob) {
-  const old = runtime.get(media.id);
-  if (old?.url) URL.revokeObjectURL(old.url);
-  const rt = { blob, url: URL.createObjectURL(blob), thumb: null, waveform: null, image: null, audioBuffer: null, audioPromise: null };
+export function attachBlob(media, blob) {
+  return attachSource(media, { blob, url: URL.createObjectURL(blob), remote: false });
+}
+
+/**
+ * Associa uma URL (protocolo media:// do app desktop) a uma entrada de mídia.
+ * O arquivo fica no disco e é lido aos pedaços: nada é carregado inteiro na memória.
+ */
+export function attachUrl(media, url) {
+  return attachSource(media, { blob: null, url, remote: true });
+}
+
+/**
+ * Associa o arquivo de um caminho absoluto (desktop). Prefere a leitura direta do disco;
+ * se o protocolo não estiver disponível ou falhar, lê o arquivo inteiro como antes.
+ * @returns false se o arquivo não existe ou não pôde ser lido
+ */
+export async function attachPath(media, filePath) {
+  const url = await mediaUrlFor(filePath);
+  if (url) {
+    try {
+      await attachUrl(media, url);
+      return true;
+    } catch (err) {
+      console.warn('Leitura direta falhou para', filePath, '— carregando o arquivo inteiro.', err);
+    }
+  }
+  const bytes = await readFileByPath(filePath);
+  if (!bytes) return false;
+  await attachBlob(media, new Blob([bytes]));
+  return true;
+}
+
+/** Importa arquivos pelos caminhos absolutos (desktop). @returns { added: media[], failed: [{ path, error }] } */
+export async function importPaths(paths) {
+  const added = [];
+  const failed = [];
+  for (const p of paths) {
+    const filePath = String(p);
+    const name = filePath.split(/[\\/]/).pop();
+    const type = guessType(name);
+    if (!type) { failed.push({ path: filePath, error: 'unsupported file type' }); continue; }
+    const media = { id: uid('m'), name, type, path: filePath, duration: 0, width: 0, height: 0, hasAudio: false, size: 0 };
+    try {
+      if (!(await attachPath(media, filePath))) { failed.push({ path: filePath, error: 'file not found or unreadable' }); continue; }
+    } catch (err) {
+      releaseRuntime(media.id);
+      failed.push({ path: filePath, error: 'unsupported or corrupt media file' });
+      continue;
+    }
+    state.project.media.push(media);
+    added.push(media);
+  }
+  if (added.length) emit('media');
+  return { added, failed };
+}
+
+function releaseRuntime(mediaId) {
+  const rt = runtime.get(mediaId);
+  if (rt?.url && !rt.remote) URL.revokeObjectURL(rt.url);
+  runtime.delete(mediaId);
+}
+
+// avisado depois que uma mídia ganha um arquivo (o módulo de proxy usa para entrar na fila)
+let attachHook = null;
+export function setAttachHook(fn) {
+  attachHook = fn;
+}
+
+async function attachSource(media, source) {
+  releaseRuntime(media.id);
+  // proxyUrl: cópia leve usada no preview; proxy: '' | 'NN%' (gerando) | 'ready'
+  const rt = { ...source, thumb: null, waveform: null, image: null, proxyUrl: null, proxy: '' };
   runtime.set(media.id, rt);
 
   if (media.type === 'image') {
-    const img = await loadImage(rt.url);
+    const img = await loadImage(rt.url, rt.remote);
     rt.image = img;
     media.width = img.naturalWidth;
     media.height = img.naturalHeight;
@@ -61,14 +147,13 @@ export async function attachBlob(media, blob) {
   }
 
   await probeAV(media, rt);
-  if (media.type === 'audio' || media.hasAudio) {
-    // decodifica em segundo plano para gerar a waveform
-    getAudioBuffer(media.id).then(() => emit('media')).catch((e) => console.warn('Sem áudio decodificável em', media.name, e));
-  }
+  if (media.type === 'audio' || media.hasAudio) queueWaveform(media, rt);
+  // o caminho só é conhecido por quem chamou: espera a volta para o módulo de proxy enxergá-lo
+  if (media.type === 'video') setTimeout(() => runtime.get(media.id) === rt && attachHook?.(media), 0);
 }
 
 async function probeAV(media, rt) {
-  const input = new Input({ source: new BlobSource(rt.blob), formats: ALL_FORMATS });
+  const input = new Input({ source: inputSource(rt), formats: ALL_FORMATS });
   try {
     media.duration = await input.computeDuration();
     const vt = await input.getPrimaryVideoTrack();
@@ -90,7 +175,7 @@ async function probeAV(media, rt) {
     if (!vt && !at) throw new Error('nenhuma faixa de áudio ou vídeo encontrada');
   } catch (err) {
     // fallback: metadados via elemento de mídia do navegador
-    const meta = await probeWithElement(rt.url, media.type);
+    const meta = await probeWithElement(rt.url, media.type, rt.remote);
     if (!meta) throw err;
     Object.assign(media, meta);
   } finally {
@@ -98,9 +183,10 @@ async function probeAV(media, rt) {
   }
 }
 
-function probeWithElement(url, type) {
+function probeWithElement(url, type, remote = false) {
   return new Promise((resolve) => {
     const el = document.createElement(type === 'audio' ? 'audio' : 'video');
+    if (remote) el.crossOrigin = 'anonymous';
     el.preload = 'metadata';
     el.onloadedmetadata = () =>
       resolve({ duration: el.duration, width: el.videoWidth || 0, height: el.videoHeight || 0, hasAudio: true, type: el.videoWidth ? 'video' : 'audio' });
@@ -117,9 +203,11 @@ function canvasToDataUrl(src) {
   return c.toDataURL('image/jpeg', 0.8);
 }
 
-function loadImage(url) {
+function loadImage(url, remote = false) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    // sem isto, uma imagem vinda do protocolo media:// "suja" o canvas e impede efeitos e exportação
+    if (remote) img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('imagem inválida'));
     img.src = url;
@@ -128,78 +216,77 @@ function loadImage(url) {
 
 export const AUDIO_RATE = 48000;
 
-/** AudioBuffer decodificado (48 kHz) da mídia, com cache. */
-export function getAudioBuffer(mediaId) {
-  const rt = runtime.get(mediaId);
-  if (!rt) return Promise.resolve(null);
-  if (rt.audioBuffer) return Promise.resolve(rt.audioBuffer);
-  if (rt.audioPromise) return rt.audioPromise;
-  rt.audioPromise = (async () => {
-    let buffer;
+// ---------------------------------------------------------------- forma de onda
+// Uma mídia por vez: decodificar várias ao mesmo tempo trava máquinas fracas.
+let waveChain = Promise.resolve();
+function queueWaveform(media, rt) {
+  waveChain = waveChain.then(async () => {
+    if (runtime.get(media.id) !== rt) return; // removida ou trocada enquanto esperava
     try {
-      const ctx = new OfflineAudioContext(2, 1, AUDIO_RATE);
-      buffer = await ctx.decodeAudioData(await rt.blob.arrayBuffer());
-    } catch {
-      buffer = await decodeWithMediabunny(rt.blob);
+      rt.waveform = await buildWaveform(media, rt);
+      if (rt.waveform && runtime.get(media.id) === rt) emit('media');
+    } catch (e) {
+      console.warn('Sem áudio decodificável em', media.name, e);
     }
-    rt.audioBuffer = buffer;
-    if (buffer) rt.waveform = makeWaveform(buffer);
-    return buffer;
-  })();
-  return rt.audioPromise;
+  });
 }
 
-async function decodeWithMediabunny(blob) {
-  const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+/** Lê o áudio aos pedaços e guarda só os picos: o áudio decodificado nunca fica inteiro na memória. */
+async function buildWaveform(media, rt) {
+  const input = new Input({ source: inputSource(rt), formats: ALL_FORMATS });
   try {
     const at = await input.getPrimaryAudioTrack();
-    if (!at || !(await at.canDecode())) return null;
-    const duration = await input.computeDuration();
-    const sr = at.sampleRate;
-    const ch = Math.min(2, at.numberOfChannels);
-    const out = new AudioBuffer({ length: Math.ceil(duration * sr) + 1, numberOfChannels: ch, sampleRate: sr });
-    const sink = new AudioBufferSink(at);
-    for await (const { buffer, timestamp } of sink.buffers()) {
-      const offset = Math.round(timestamp * sr);
-      if (offset < 0 || offset >= out.length) continue;
-      for (let c = 0; c < ch; c++) {
-        const data = buffer.getChannelData(Math.min(c, buffer.numberOfChannels - 1));
-        out.copyToChannel(data.subarray(0, out.length - offset), c, offset);
+    if (at && (await at.canDecode())) {
+      const peaks = createPeaks(media.duration || (await input.computeDuration()));
+      const sink = new AudioBufferSink(at);
+      for await (const { buffer, timestamp } of sink.buffers()) {
+        if (runtime.get(media.id) !== rt) return null;
+        addSamples(peaks, buffer.getChannelData(0), timestamp, buffer.sampleRate);
       }
+      return drawWaveform(peaks);
     }
-    return out;
   } finally {
     input.dispose?.();
   }
+  // formato que só o navegador decodifica: decodifica inteiro, tira os picos e descarta
+  const buffer = await decodeWholeAudio(media.id);
+  if (!buffer) return null;
+  const peaks = createPeaks(buffer.duration);
+  addSamples(peaks, buffer.getChannelData(0), 0, buffer.sampleRate);
+  return drawWaveform(peaks);
 }
 
-function makeWaveform(buffer) {
-  const W = Math.min(4000, Math.max(200, Math.ceil(buffer.duration * 50)));
+function drawWaveform(peaks) {
   const H = 64;
   const c = document.createElement('canvas');
-  c.width = W;
+  c.width = peaks.n;
   c.height = H;
   const ctx = c.getContext('2d');
-  const data = buffer.getChannelData(0);
-  const step = Math.max(1, Math.floor(data.length / W));
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  for (let x = 0; x < W; x++) {
-    let max = 0;
-    const s = x * step;
-    for (let i = 0; i < step; i += 4) {
-      const v = Math.abs(data[s + i] || 0);
-      if (v > max) max = v;
-    }
-    const h = Math.max(1, max * H);
+  for (let x = 0; x < peaks.n; x++) {
+    const h = Math.max(1, Math.min(1, peaks.data[x]) * H);
     ctx.fillRect(x, (H - h) / 2, 1, h);
   }
   return c.toDataURL('image/png');
 }
 
-export function removeMedia(mediaId) {
+/**
+ * Áudio inteiro da mídia decodificado pelo navegador (sem cache: pode ser grande).
+ * Só é usado quando o Mediabunny não consegue ler o áudio aos pedaços.
+ */
+export async function decodeWholeAudio(mediaId) {
   const rt = runtime.get(mediaId);
-  if (rt?.url) URL.revokeObjectURL(rt.url);
-  runtime.delete(mediaId);
+  if (!rt || !(rt.blob || rt.remote)) return null;
+  try {
+    const bytes = rt.blob ? await rt.blob.arrayBuffer() : await (await fetch(rt.url)).arrayBuffer();
+    return await new OfflineAudioContext(2, 1, AUDIO_RATE).decodeAudioData(bytes);
+  } catch {
+    return null;
+  }
+}
+
+export function removeMedia(mediaId) {
+  releaseRuntime(mediaId);
   state.project.media = state.project.media.filter((m) => m.id !== mediaId);
   state.project.clips = state.project.clips.filter((c) => c.mediaId !== mediaId);
   removeLayersUsingMedia(mediaId);
@@ -207,6 +294,6 @@ export function removeMedia(mediaId) {
 }
 
 export function clearRuntime() {
-  for (const rt of runtime.values()) if (rt.url) URL.revokeObjectURL(rt.url);
+  for (const rt of runtime.values()) if (rt.url && !rt.remote) URL.revokeObjectURL(rt.url);
   runtime.clear();
 }

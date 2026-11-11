@@ -21,7 +21,8 @@
     "productName": "CorteSeco Studio",
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "mcp/**/*"
     ],
     "directories": {
       "output": "release"

@@ -13,6 +13,7 @@ import {
 import * as pen from './penTool.js';
 import { h, toast, formatTime, clamp } from '../util.js';
 import { MEDIA_MIME } from '../timeline.js';
+import { count, timed } from '../../perf.js';
 
 const TOOLS = [
   ['select', '⬉', 'Selecionar e transformar (V)'],
@@ -46,6 +47,8 @@ let drag = null;
 let gizmo = [];
 let hover = null; // última posição do ponteiro (para o elástico da caneta)
 let checker = null;
+let dirty = true; // o palco só é redesenhado quando algo mudou
+const invalidate = () => { dirty = true; };
 
 export function initStage(el) {
   panel = el;
@@ -81,8 +84,10 @@ export function initStage(el) {
   stageEl.addEventListener('drop', onDrop);
 
   subscribe((reason) => {
+    dirty = true;
     if (reason === 'motion' || reason === 'mode') syncTools();
   });
+  for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'pointerleave', 'dblclick', 'wheel']) canvas.addEventListener(ev, invalidate, { passive: true });
   syncTools();
   requestAnimationFrame(loop);
 }
@@ -124,6 +129,7 @@ function resize() {
   canvas.height = Math.max(1, Math.round(r.height * dpr));
   checker = null;
   fittedFor = null;
+  dirty = true;
 }
 
 export function fitView() {
@@ -132,6 +138,7 @@ export function fitView() {
   const r = stageEl.getBoundingClientRect();
   const z = Math.max(0.01, Math.min((r.width - 48) / comp.width, (r.height - 48) / comp.height));
   view = { zoom: z, x: (r.width - comp.width * z) / 2, y: (r.height - comp.height * z) / 2 };
+  dirty = true;
 }
 
 const toScreen = (cx, cy) => [cx * view.zoom + view.x, cy * view.zoom + view.y];
@@ -165,8 +172,11 @@ const getImage = (item) => runtime.get(item.mediaId)?.image || null;
 function loop() {
   requestAnimationFrame(loop);
   if (state.mode !== 'motion') return;
+  count('stageRaf');
   tickMotion();
-  draw();
+  if (!dirty) return;
+  dirty = false;
+  timed('stageDraw', draw);
 }
 
 function draw() {

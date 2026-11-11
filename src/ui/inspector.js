@@ -1,19 +1,24 @@
 // Inspector: propriedades do clipe selecionado, keyframes por propriedade e opções de texto/áudio.
 import {
-  state, emit, subscribe, checkpoint, selectedClip, getMedia, localTime, measureText,
+  state, emit, subscribe, checkpoint, selectedClip, getMedia, getTrack, localTime, measureText,
   orderedTracks, overlaps, addTrack, uid, clipsOnTrack, projectDuration,
 } from '../state/project.js';
 import { valueAt, setProp, setKeyframe, removeKeyframe, keyframeAt, hasKeyframes, EASINGS, KF_PROPS } from '../state/keyframes.js';
 import { seek } from '../engine/player.js';
-import { TRANSITIONS, SLIDE_DIRECTIONS } from '../engine/compositor.js';
+import { SLIDE_DIRECTIONS } from '../engine/compositor.js';
 import { h, clamp, formatTime, formatDuration } from './util.js';
 import { getComp } from '../motion/model.js';
 import { openComp } from './motion/actions.js';
+import { fxKey, effectsSection, masksSection, transitionParamRows } from './fxPanel.js';
+import { textStyleRows, textAnimSection } from './textStyle.js';
+import { transitionOptions, animOptions, transitionExtId, getExtension } from '../fx/registry.js';
 import { icon } from './icons.js';
+import { timed } from '../perf.js';
 
 let root;
 let builtKey = null;
 let bindings = [];
+let lastTimeRefresh = 0;
 let editing = false; // já criou checkpoint para a edição atual
 
 const FONTS = [
@@ -30,9 +35,17 @@ export function initInspector(el) {
   root = el;
   subscribe((reason) => {
     if (reason === 'play' || reason.startsWith('motion') || state.mode !== 'edit') return;
-    const key = keyFor();
-    if (key !== builtKey) build();
-    else refresh();
+    // tocando, os campos acompanham o playhead umas 10 vezes por segundo (não a cada quadro)
+    if (reason === 'time' && state.playing) {
+      const now = performance.now();
+      if (now - lastTimeRefresh < 100) return;
+      lastTimeRefresh = now;
+    }
+    timed('inspector', () => {
+      const key = keyFor();
+      if (key !== builtKey) build();
+      else refresh();
+    });
   });
   build();
 }
@@ -42,7 +55,7 @@ function keyFor() {
   if (!clip) return 'none:' + JSON.stringify(state.project.settings);
   const media = getMedia(clip.mediaId);
   const comp = clip.type === 'comp' ? getComp(clip.compId) : null;
-  return `${clip.id}:${clip.type}:${!!media?.hasAudio}:${!!clip.audioDetached}:${comp ? `${comp.name}/${comp.width}x${comp.height}/${comp.duration}` : ''}`;
+  return `${clip.id}:${clip.type}:${!!media?.hasAudio}:${!!clip.audioDetached}:${comp ? `${comp.name}/${comp.width}x${comp.height}/${comp.duration}` : ''}:${fxKey(clip)}`;
 }
 
 /** Cria checkpoint uma única vez por edição contínua (até o input perder o foco). */
@@ -86,6 +99,10 @@ function projectPanel() {
       h('kbd', {}, 'Espaço'), ' play · ', h('kbd', {}, 'S'), ' dividir · ', h('kbd', {}, 'Del'), ' excluir · ', h('kbd', {}, 'Shift+Del'), ' excluir e fechar buraco · ',
       h('kbd', {}, '←/→'), ' frame · ', h('kbd', {}, 'Ctrl+C/V'), ' copiar/colar · ', h('kbd', {}, 'Ctrl+Z'), ' desfazer · ', h('kbd', {}, 'Ctrl+roda'), ' zoom · ',
       h('kbd', {}, 'Alt'), ' + arrastar clipe = reordenar empurrando os outros.',
+    ),
+    h('div.insp-note', {},
+      h('kbd', {}, 'B'), ' ferramenta de corte · ', h('kbd', {}, 'A'), ' seleção · ', h('kbd', {}, 'Q'), '/', h('kbd', {}, 'W'), ' apagar antes/depois do playhead · ',
+      h('kbd', {}, '↑/↓'), ' cortes · ', h('kbd', {}, '?'), ' todos os atalhos.',
     ),
   ];
 }
@@ -145,12 +162,26 @@ function clipPanel(clip) {
   }
 
   if (isVisual) {
+    const env = {
+      bindings, beginEdit, endEdit,
+      getTime: () => localTime(clip),
+      seek: (t) => seek(clip.start + t),
+      locked: () => !!getTrack(clip.trackId)?.locked,
+    };
+    out.push(h('h3', {}, 'Efeitos'), effectsSection(clip, env));
+    out.push(h('h3', {}, 'Máscaras'), masksSection(clip, env));
+  }
+
+  if (isVisual) {
     out.push(h('h3', {}, 'Entrada'), effectSection(clip, 'animIn'));
     out.push(h('h3', {}, 'Saída'), effectSection(clip, 'animOut'));
     out.push(h('h3', {}, 'Transição com a cena anterior'), effectSection(clip, 'transition'));
   }
 
-  if (clip.type === 'text') out.push(h('h3', {}, 'Texto'), textSection(clip));
+  if (clip.type === 'text') {
+    out.push(h('h3', {}, 'Texto'), textSection(clip));
+    out.push(h('h3', {}, 'Animação do texto'), textAnimSection(clip, { beginEdit, endEdit, span: () => clip.duration }));
+  }
   if (clip.type === 'comp') {
     const comp = getComp(clip.compId);
     out.push(h('h3', {}, 'Motion'), h('div.insp-section', {},
@@ -333,10 +364,7 @@ function textSection(clip) {
   ));
   sec.append(row('Alinhar', h('select', { on: { change: (e) => { beginEdit(); f.align = e.target.value; endEdit(); emit('project'); } } },
     ...[['left', 'Esquerda'], ['center', 'Centro'], ['right', 'Direita']].map(([v, n]) => h('option', { value: v, selected: v === f.align }, n)))));
-  sec.append(row('Contorno',
-    h('input', { type: 'color', value: f.stroke || '#000000', on: { focus: beginEdit, blur: endEdit, input: (e) => { beginEdit(); f.stroke = e.target.value; emit('project'); } } }),
-    h('input', { type: 'number', min: 0, step: 1, value: f.strokeWidth || 0, on: { focus: beginEdit, blur: endEdit, input: (e) => restyle(() => { f.strokeWidth = Math.max(0, Number(e.target.value) || 0); }) } }),
-  ));
+  sec.append(...textStyleRows(clip, { restyle, beginEdit, endEdit }));
   return sec;
 }
 
@@ -414,10 +442,16 @@ function effectSection(clip, key) {
           checkpoint();
           delete clip[key];
           emit('project');
-        } else update((tr) => { tr.type = e.target.value; });
+        } else update((tr) => { tr.type = e.target.value; tr.params = {}; });
       },
     },
-  }, h('option', { value: 'none' }, 'Nenhuma'), ...Object.entries(TRANSITIONS).map(([v, n]) => h('option', { value: v }, n)));
+  }, h('option', { value: 'none' }, 'Nenhuma'), ...(key === 'transition'
+    ? transitionOptions().map(([v, n]) => h('option', { value: v }, n))
+    : animOptions().map(([label, list]) => h('optgroup', { label }, ...list.map(([v, n]) => h('option', { value: v }, n))))));
+  // parâmetros de uma transição de extensão (a seção é refeita quando o tipo muda)
+  const extRows = spec() ? transitionParamRows(spec(), { bindings, beginEdit, endEdit }) : [];
+  const missing = spec() && transitionExtId(spec().type) && !getExtension(transitionExtId(spec().type))
+    ? h('div.insp-warn', {}, 'Esta extensão não está instalada nesta máquina; a animação não aparece. Instale-a em "Extensões".') : null;
   const dur = h('input', {
     type: 'number', min: 0.1, step: 0.1,
     on: { change: (e) => update((tr) => { tr.duration = clamp(Number(e.target.value) || 0.5, 0.05, 30); }) },
@@ -432,7 +466,7 @@ function effectSection(clip, key) {
   const dirRow = row('Direção', dir);
   const colorRow = row('Cor', color, presets);
   const note = h('div.insp-note');
-  sec.append(row('Tipo', type), durRow, dirRow, colorRow, note);
+  sec.append(row('Tipo', type), durRow, dirRow, colorRow, ...extRows, missing, note);
 
   const adjacent = () => {
     const others = clipsOnTrack(clip.trackId).filter((c) => c.id !== clip.id);
@@ -445,7 +479,10 @@ function effectSection(clip, key) {
 
   bindings.push(() => {
     const tr = spec();
-    if (document.activeElement !== type) type.value = tr ? tr.type : 'none';
+    if (document.activeElement !== type) {
+      if (tr && ![...type.options].some((o) => o.value === tr.type)) type.append(h('option', { value: tr.type }, 'Não instalada'));
+      type.value = tr ? tr.type : 'none';
+    }
     durRow.style.display = tr ? '' : 'none';
     dirRow.style.display = tr?.type === 'slide' ? '' : 'none';
     colorRow.style.display = tr?.type === 'flash' ? '' : 'none';

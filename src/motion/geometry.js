@@ -156,6 +156,38 @@ export function segmentPoint(a, b, u) {
   ];
 }
 
+/** Divide o segmento `seg` do contorno em u preservando a forma da curva. Retorna o índice do ponto novo. */
+export function insertPoint(contour, seg, u) {
+  const pts = contour.pts;
+  const a = pts[seg];
+  const b = pts[(seg + 1) % pts.length];
+  const lerp = (p, q) => [p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u];
+  let point;
+  if (!a.ox && !a.oy && !b.ix && !b.iy) {
+    const [x, y] = lerp([a.x, a.y], [b.x, b.y]);
+    point = { x, y, ix: 0, iy: 0, ox: 0, oy: 0 };
+  } else {
+    // de Casteljau
+    const p0 = [a.x, a.y];
+    const p1 = [a.x + (a.ox || 0), a.y + (a.oy || 0)];
+    const p2 = [b.x + (b.ix || 0), b.y + (b.iy || 0)];
+    const p3 = [b.x, b.y];
+    const q0 = lerp(p0, p1);
+    const q1 = lerp(p1, p2);
+    const q2 = lerp(p2, p3);
+    const r0 = lerp(q0, q1);
+    const r1 = lerp(q1, q2);
+    const s = lerp(r0, r1);
+    a.ox = q0[0] - a.x;
+    a.oy = q0[1] - a.y;
+    b.ix = q2[0] - b.x;
+    b.iy = q2[1] - b.y;
+    point = { x: s[0], y: s[1], ix: r0[0] - s[0], iy: r0[1] - s[1], ox: r1[0] - s[0], oy: r1[1] - s[1] };
+  }
+  pts.splice(seg + 1, 0, point);
+  return seg + 1;
+}
+
 /** Aproxima o contorno por uma poligonal. */
 export function flatten(contour, steps = 16) {
   const { pts } = contour;

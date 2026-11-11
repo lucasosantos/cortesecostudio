@@ -1,9 +1,10 @@
 // Diálogos: configurações do projeto, exportação e mídias ausentes.
 import { state, emit, checkpoint, projectDuration } from '../state/project.js';
 import { valueAt } from '../state/keyframes.js';
-import { exportProject, ExportCanceled } from '../engine/exporter.js';
+import { exportProject, exportExtension, ExportCanceled } from '../engine/exporter.js';
+import { getPref } from '../prefs.js';
 import { pause } from '../engine/player.js';
-import { saveFile } from '../platform/index.js';
+import { saveFile, canStreamToDisk, pickSavePath, openFileWriter } from '../platform/index.js';
 import { isMissing } from '../media/library.js';
 import { relinkOne } from './mediaPanel.js';
 import { h, openModal, toast, formatDuration } from './util.js';
@@ -171,6 +172,21 @@ export function openExport() {
 
   startBtn.addEventListener('click', async () => {
     const format = formats.querySelector('input:checked').value;
+    const baseName = (name.value || 'video').replace(/[\\/:*?"<>|]/g, '_');
+    // no desktop o arquivo é escolhido antes e gravado aos poucos: o vídeo não fica inteiro na memória
+    let writer = null;
+    let savedPath = null;
+    if (canStreamToDisk) {
+      const ext = await exportExtension(state.project, format);
+      savedPath = await pickSavePath(`${baseName}.${ext}`, [{ name: ext.toUpperCase(), extensions: [ext] }]);
+      if (!savedPath) return;
+      try {
+        writer = await openFileWriter(savedPath);
+      } catch (err) {
+        label.textContent = 'Erro: ' + (err.message || err);
+        return;
+      }
+    }
     running = { canceled: false };
     startBtn.disabled = true;
     cancelBtn.textContent = 'Cancelar';
@@ -181,6 +197,9 @@ export function openExport() {
         format,
         quality: quality.value,
         signal: running,
+        writer,
+        hardware: true,
+        fast: getPref('fastExport'),
         onProgress: (f, text) => {
           bar.style.width = (f * 100).toFixed(1) + '%';
           const elapsed = (performance.now() - t0) / 1000;
@@ -189,9 +208,15 @@ export function openExport() {
         },
       });
       label.textContent = 'Salvando arquivo…';
-      const filename = `${(name.value || 'video').replace(/[\\/:*?"<>|]/g, '_')}.${result.extension}`;
-      const filters = [{ name: result.extension.toUpperCase(), extensions: [result.extension] }];
-      const saved = await saveFile(filename, result.data, filters);
+      let saved = savedPath;
+      if (writer) {
+        await writer.close();
+        writer = null;
+      } else {
+        const filename = `${baseName}.${result.extension}`;
+        const filters = [{ name: result.extension.toUpperCase(), extensions: [result.extension] }];
+        saved = await saveFile(filename, result.data, filters);
+      }
       running = null;
       if (saved) {
         m.close();
@@ -203,6 +228,8 @@ export function openExport() {
       }
     } catch (err) {
       running = null;
+      // apaga o arquivo incompleto
+      await writer?.abort().catch(() => {});
       startBtn.disabled = false;
       cancelBtn.textContent = 'Fechar';
       if (err instanceof ExportCanceled) {

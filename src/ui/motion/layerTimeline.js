@@ -9,11 +9,12 @@ import {
   M, fps, snapFrame, seekMotion, pauseMotion, selectLayers, isKeySelected, toggleKeyframe,
   deleteSelection, duplicateSelection, reorderSelection, exitMotion,
 } from './actions.js';
-import { h, clamp, formatTime } from '../util.js';
+import { h, clamp, formatTime, visibleWindow } from '../util.js';
 import { icons } from '../icons.js';
 import { saveSizes } from '../layout.js';
 
 const HEAD_W = 300;
+let rulerWin = { t0: 0, t1: Infinity, x0: -Infinity, x1: Infinity };
 const GLYPH = { shape: '◆', text: 'T', image: '▣', group: '◇' };
 
 let root, scrollEl, contentEl, playheadEl, nameInput, durInput;
@@ -38,6 +39,10 @@ export function initLayerTimeline(el) {
   });
   contentEl.addEventListener('pointerdown', onPointerDown);
   scrollEl.addEventListener('wheel', onWheel, { passive: false });
+  scrollEl.addEventListener('scroll', () => {
+    const x = scrollEl.scrollLeft;
+    if (x < rulerWin.x0 || x > rulerWin.x1) queueRender();
+  }, { passive: true });
   new ResizeObserver(() => queueRender()).observe(scrollEl);
 }
 
@@ -46,7 +51,7 @@ function resizer() {
   el.addEventListener('pointerdown', (e) => {
     const startY = e.clientY;
     const startH = root.getBoundingClientRect().height;
-    const move = (ev) => document.body.style.setProperty('--tl-h', clamp(startH - (ev.clientY - startY), 160, window.innerHeight - 260) + 'px');
+    const move = (ev) => document.body.style.setProperty('--tl-h', clamp(startH - (document.body.classList.contains('tl-top') ? -1 : 1) * (ev.clientY - startY), 120, window.innerHeight - 120) + 'px');
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); saveSizes(); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -172,8 +177,10 @@ function ruler(totalSec, major) {
   const zoom = M().zoom;
   const ticks = h('div.tl-ticks');
   const minor = major / 5;
-  const n = Math.ceil(totalSec / minor);
-  for (let i = 0; i <= n; i++) {
+  // só as marcas da faixa visível (mais meia tela de cada lado)
+  rulerWin = visibleWindow(scrollEl.scrollLeft, scrollEl.clientWidth, zoom, HEAD_W);
+  const n = Math.min(Math.ceil(totalSec / minor), Math.ceil(rulerWin.t1 / minor));
+  for (let i = Math.floor(rulerWin.t0 / minor); i <= n; i++) {
     const t = i * minor;
     const isMajor = i % 5 === 0;
     const tick = h(`div.tick${isMajor ? '.major' : ''}`, { style: { left: t * zoom + 'px' } });
