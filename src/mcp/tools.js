@@ -1,6 +1,7 @@
 // Implementação das ferramentas MCP: o que uma IA conectada pode ler e alterar no projeto aberto.
 // As definições (nomes, descrições, esquemas) ficam em mcp/tools.json; aqui cada uma vira uma função.
 // Mensagens de erro são em inglês porque quem as lê é o modelo.
+import { FIELD_PROPS, compFields, fieldFor, addField, removeField, fieldValue, coerceFieldValue } from '../motion/fields.js';
 import {
   state, emit, pushHistory, undo, redo, getClip, getTrack, getMedia, orderedTracks, projectDuration, overlaps, addTrack, removeTrack,
   moveTrack, removeClip, rippleRemove, splitClip, createClipFromMedia, createTextClip, createCompClip, measureText, serializeProject,
@@ -112,6 +113,40 @@ function specSummary(spec) {
   return spec ? { type: spec.type, duration: r3(spec.duration), ...(spec.direction ? { direction: spec.direction } : {}), ...(spec.params && Object.keys(spec.params).length ? { params: spec.params } : {}) } : undefined;
 }
 
+/** update_clip.fields: { idOuRótulo: valor | null } (null = volta ao valor da composição). */
+function applyClipFields(clip, values) {
+  if (clip.type !== 'comp') fail('"fields" only applies to composition clips.');
+  if (!values || typeof values !== 'object' || Array.isArray(values)) fail('"fields" must be an object: { fieldIdOrLabel: value }.');
+  const comp = state.project.comps?.find((x) => x.id === clip.compId) || fail('The composition of this clip no longer exists.');
+  const fields = compFields(comp);
+  const next = { ...(clip.fieldValues || {}) };
+  for (const [key, value] of Object.entries(values)) {
+    const f = fields.find((x) => x.id === key) || fields.find((x) => x.label === key)
+      || fail(`No field "${key}" in composition "${comp.name}". Fields: ${fields.map((x) => `${x.id} (${x.label})`).join(', ') || 'none — mark them with update_layer.fields'}.`);
+    if (value === null) { delete next[f.id]; continue; }
+    if (f.prop === 'image' && !state.project.media.some((m) => m.id === value && m.type === 'image')) fail(`"${value}" is not an image media id.`);
+    try {
+      next[f.id] = coerceFieldValue(f, value);
+    } catch (err) {
+      fail(err.message);
+    }
+  }
+  clip.fieldValues = next;
+}
+
+/** update_layer.fields: { prop: rótulo | true | null } marca/desmarca propriedades da camada como campos editáveis por clipe. */
+function applyLayerFields(comp, layer, spec) {
+  const allowed = FIELD_PROPS[layer.type] || fail(`Layers of type "${layer.type}" have no editable fields.`);
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) fail('"fields" must be an object: { prop: label | null }.');
+  for (const [prop, label] of Object.entries(spec)) {
+    if (!allowed[prop]) fail(`"${prop}" cannot be a field on a ${layer.type} layer. Use: ${Object.keys(allowed).join(', ')}.`);
+    const existing = fieldFor(comp, layer.id, prop);
+    if (label === null || label === false) { if (existing) removeField(comp, existing.id); continue; }
+    const f = existing || addField(comp, layer, prop);
+    if (typeof label === 'string' && label.trim()) f.label = label.trim().slice(0, 60);
+  }
+}
+
 function clipSummary(c) {
   const out = {
     id: c.id, type: c.type, name: c.name, trackId: c.trackId,
@@ -128,6 +163,16 @@ function clipSummary(c) {
   if (c.effects?.length) out.effects = c.effects.map((e) => (e.enabled === false ? `${e.type} (off)` : e.type));
   if (c.masks?.length) out.masks = c.masks.map((m) => m.shape + (m.inverted ? ' (inverted)' : ''));
   for (const k of ['transition', 'animIn', 'animOut']) if (c[k]) out[k] = specSummary(c[k]);
+  if (c.type === 'comp') {
+    const comp = state.project.comps?.find((x) => x.id === c.compId);
+    const fields = compFields(comp);
+    if (fields.length) {
+      out.fields = fields.map((f) => ({
+        id: f.id, label: f.label, prop: f.prop, value: fieldValue(comp, f, c.fieldValues),
+        custom: !!c.fieldValues && Object.prototype.hasOwnProperty.call(c.fieldValues, f.id),
+      }));
+    }
+  }
   return out;
 }
 
@@ -540,6 +585,7 @@ export const TOOLS = {
         if (a.fit && a.fit !== 'contain') Object.assign(clip.props, fitProps(comp.width, comp.height, a.fit));
       }
       if (a.name !== undefined) clip.name = String(a.name);
+      if (a.fields !== undefined) applyClipFields(clip, a.fields);
       applyClipProps(clip, a.props);
       applyTextAnim(clip, a.textAnim);
       state.selection = clip.id;
@@ -576,6 +622,7 @@ export const TOOLS = {
         applyFont(clip, a.font);
         refitText(clip, before);
       }
+      if (a.fields !== undefined) applyClipFields(clip, a.fields);
       applyClipProps(clip, a.props);
       applyTextAnim(clip, a.textAnim);
       applyKeyframes(clip, a.keyframes, clip.type === 'audio' ? ['volume'] : KF_PROPS, () => numberCheck);
@@ -761,6 +808,7 @@ export const TOOLS = {
         layer.parentId = parent.id;
       }
       applyLayerCommon(comp, layer, a, { parent: false });
+      if (a.fields !== undefined) applyLayerFields(comp, layer, a.fields);
       return { ...layerSummary(layer), props: Object.fromEntries(Object.entries(layerPropsAt(layer, 0)).filter(([k]) => k !== 'path').map(([k, v]) => [k, r3(v)])) };
     });
   },
@@ -771,6 +819,7 @@ export const TOOLS = {
       const layer = layerOf(comp, a.layerId);
       applyLayerText(layer, a.text, a.font);
       applyLayerCommon(comp, layer, a);
+      if (a.fields !== undefined) applyLayerFields(comp, layer, a.fields);
       for (const k of ['hidden', 'locked']) if (a[k] !== undefined) layer[k] = !!a[k];
       if (a.matte !== undefined) {
         if (a.matte === null) layer.matte = null;

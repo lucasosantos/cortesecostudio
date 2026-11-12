@@ -149,6 +149,11 @@
               "null"
             ],
             "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          },
+          "fields": {
+            "type": "object",
+            "description": "With compId: initial values for the composition's editable fields (same format as update_clip.fields).",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -220,6 +225,11 @@
               "null"
             ],
             "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Composition clips only: values for the composition's editable fields, keyed by field id or label (see get_clip / get_project .fields). Text fields take a string, color fields \"#rrggbb\" or \"#rrggbbaa\", image fields an image media id. null resets a field to the composition's value. Lets one composition (e.g. a name lower third) be reused with a different name or color in each clip.",
+            "additionalProperties": true
           }
         },
         "required": [
@@ -662,6 +672,11 @@
               "null"
             ],
             "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Marks properties of the new layer as editable per clip (same format as update_layer.fields).",
+            "additionalProperties": true
           }
         },
         "required": [
@@ -789,6 +804,11 @@
               "null"
             ],
             "description": "Per-unit text animation (letter, word or line): { in?, out?, loop? }; each part null removes it, null removes all. in/out: { preset: fade|rise|drop|slide|pop|spin|blur|typewriter, unit: char|word|line, order: forward|backward|center|edges|random, duration (s per unit), delay (s between units), easing (linear|ease|easeIn|easeOut|easeInOut|back|bounce|elastic), amount (intensity, 1 = default) }. The entry starts at the element start; the exit ends at the element end. loop: { preset: wave|shake|pulse|flicker, unit, amount, speed (cycles/s), spread (phase offset per unit) } plays all the time."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Marks properties of this layer as editable per clip, so each timeline clip of the composition can change them: { prop: label } to add/rename, { prop: null } to remove. Props: text layers \"text\", \"textColor\"; shape layers \"fill\", \"stroke\"; image layers \"image\". Then set the values with update_clip.fields.",
+            "additionalProperties": true
           }
         },
         "required": [

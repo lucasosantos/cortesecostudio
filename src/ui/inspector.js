@@ -8,6 +8,7 @@ import { seek } from '../engine/player.js';
 import { SLIDE_DIRECTIONS } from '../engine/compositor.js';
 import { h, clamp, formatTime, formatDuration } from './util.js';
 import { getComp } from '../motion/model.js';
+import { clipFieldsSection, fieldsKey } from './compFields.js';
 import { openComp } from './motion/actions.js';
 import { fxKey, effectsSection, masksSection, transitionParamRows } from './fxPanel.js';
 import { textStyleRows, textAnimSection } from './textStyle.js';
@@ -18,6 +19,7 @@ import { timed } from '../perf.js';
 
 let root;
 let builtKey = null;
+let builtClip = null; // objeto do clipe do painel: desfazer/refazer recria o projeto, e os controles precisam do objeto novo
 let bindings = [];
 let lastTimeRefresh = 0;
 let editing = false; // já criou checkpoint para a edição atual
@@ -35,7 +37,7 @@ export function initInspector(el) {
     }
     timed('inspector', () => {
       const key = keyFor();
-      if (key !== builtKey) build();
+      if (key !== builtKey || selectedClip() !== builtClip) build();
       else refresh();
     });
   });
@@ -47,7 +49,7 @@ function keyFor() {
   if (!clip) return 'none:' + JSON.stringify(state.project.settings);
   const media = getMedia(clip.mediaId);
   const comp = clip.type === 'comp' ? getComp(clip.compId) : null;
-  return `${selectedClipIds().length}:${clip.id}:${clip.type}:${!!media?.hasAudio}:${!!clip.audioDetached}:${comp ? `${comp.name}/${comp.width}x${comp.height}/${comp.duration}` : ''}:${fxKey(clip)}`;
+  return `${selectedClipIds().length}:${clip.id}:${clip.type}:${!!media?.hasAudio}:${!!clip.audioDetached}:${comp ? `${comp.name}/${comp.width}x${comp.height}/${comp.duration}/${fieldsKey(comp)}/${(comp.fields || []).map((f) => f.label).join('|')}` : ''}:${fxKey(clip)}`;
 }
 
 /** Cria checkpoint uma única vez por edição contínua (até o input perder o foco). */
@@ -65,6 +67,7 @@ function build() {
   builtKey = keyFor();
   bindings = [];
   const clip = selectedClip();
+  builtClip = clip;
   const n = selectedClipIds().length;
   const multiNote = n > 1
     ? [h('div.insp-note.multi-note', {}, `${n} clipes selecionados — arraste qualquer um na timeline para mover todos juntos; Del exclui todos. Abaixo, o clipe clicado por último.`)]
@@ -186,6 +189,7 @@ function clipPanel(clip) {
         : 'A composição deste clipe não existe mais.'),
       comp ? h('div.insp-actions', {}, h('button.primary', { title: 'Abre o workspace de motion (ou duplo clique no clipe)', on: { click: () => openComp(comp.id) } }, 'Editar composição')) : null,
     ));
+    if (comp) out.push(h('h3', {}, 'Campos deste clipe'), clipFieldsSection(clip, comp, { bindings, beginEdit, endEdit }));
   }
 
   if (hasAudio) {

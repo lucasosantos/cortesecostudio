@@ -6,6 +6,7 @@ import {
   selectedClipIds,
 } from '../state/project.js';
 import { getComp } from '../motion/model.js';
+import { fieldSummary } from '../motion/fields.js';
 import { openComp } from './motion/actions.js';
 import {
   valueAt, hasKeyframes, keyframeTimes, moveKeyframesAt, removeKeyframesAt, removeKeyframe, setKeyframe, shiftKeyframes,
@@ -19,6 +20,12 @@ import { openShortcuts } from './shortcuts.js';
 import { transitionIndexFor } from '../engine/compositor.js';
 import { transitionKnown, transitionLabel } from '../fx/registry.js';
 import { timed } from '../perf.js';
+
+/** " · João": o primeiro campo de texto trocado no clipe de composição, para diferenciar clipes da mesma composição. */
+const compLabelSuffix = (clip) => {
+  const text = fieldSummary(getComp(clip.compId), clip.fieldValues);
+  return text ? ` · ${text}` : '';
+};
 
 const HEAD_W = 190;
 // altura da linha de cada track (ajustável arrastando a borda de baixo do cabeçalho; guardada em track.height)
@@ -520,7 +527,7 @@ function clipEl(clip, track, tIndex) {
     }));
   }
   const label = clip.type === 'text' ? `T  ${String(clip.text || '').split('\n')[0]}`
-    : clip.type === 'comp' ? `◆ ${getComp(clip.compId)?.name || clip.name || 'Composição'}`
+    : clip.type === 'comp' ? `◆ ${getComp(clip.compId)?.name || clip.name || 'Composição'}${compLabelSuffix(clip)}`
     : clip.name || media?.name || clip.type;
   el.append(h('div.label', {}, label));
   if (clip.mediaId && isMissing(clip.mediaId)) el.append(h('div.missing-tag', {}, 'mídia ausente'));

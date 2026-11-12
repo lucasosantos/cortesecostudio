@@ -6,6 +6,7 @@ import { cssColor } from './interp.js';
 import { shapePath, trace, traceContour, contourLength, trimDash, mul, apply } from './geometry.js';
 import { layerPropsAt, worldMatrix, layerActive, getLayer, localBounds } from './model.js';
 import { hasFx, drawFx, animationAt } from '../fx/apply.js';
+import { applyFields } from './fields.js';
 
 const scratch = [];
 /** Canvas auxiliar do tamanho do destino (usado pelos mattes). */
@@ -26,9 +27,11 @@ function scratchCanvas(i, w, h) {
  * Desenha a composição no tempo t. O contexto já deve estar transformado de modo que
  * (0, 0)–(comp.width, comp.height) seja a área da composição.
  * @param getSource ({ type: 'image', mediaId }) => CanvasImageSource | null
- * @param opts { clip: recorta na área da composição (padrão true), background: pinta o fundo (padrão true) }
+ * @param opts { clip: recorta na área da composição (padrão true), background: pinta o fundo (padrão true),
+ *               fields: valores dos campos editáveis de um clipe (clip.fieldValues) }
  */
 export function drawComp(ctx, comp, t, getSource, opts = {}) {
+  comp = applyFields(comp, opts.fields);
   const frame = { comp, t, getSource, cache: new Map() };
   ctx.save();
   if (opts.clip !== false) {
@@ -156,7 +159,16 @@ function paintLayer(ctx, frame, layer, p) {
     drawText(ctx, layer, 0, 0, size.w, size.h, { t: frame.t - layer.in, span: layer.out - layer.in });
   } else if (layer.type === 'image') {
     const src = frame.getSource?.({ type: 'image', mediaId: layer.mediaId, id: layer.id });
-    if (src) ctx.drawImage(src, 0, 0, p.w, p.h);
+    if (!src) return;
+    if (layer.fit === 'contain') {
+      // imagem trocada por um campo: cabe inteira na caixa da original, sem distorcer
+      const sw = src.naturalWidth || src.videoWidth || src.width;
+      const sh = src.naturalHeight || src.videoHeight || src.height;
+      const k = sw && sh ? Math.min(p.w / sw, p.h / sh) : 1;
+      ctx.drawImage(src, (p.w - sw * k) / 2, (p.h - sh * k) / 2, sw * k, sh * k);
+    } else {
+      ctx.drawImage(src, 0, 0, p.w, p.h);
+    }
   }
 }
 

@@ -4,6 +4,7 @@ import { state, uid, emit } from '../state/project.js';
 import { pathForFile, mediaUrlFor, readFileByPath } from '../platform/index.js';
 import { createPeaks, addSamples } from './peaks.js';
 import { removeLayersUsingMedia, createComp } from '../motion/model.js';
+import { clearFieldMedia } from '../motion/fields.js';
 import { importSvg } from '../motion/svgImport.js';
 import { COMP_EXT, importCompText } from '../motion/compFile.js';
 
@@ -353,6 +354,7 @@ export function removeMedia(mediaId) {
   state.project.media = state.project.media.filter((m) => m.id !== mediaId);
   state.project.clips = state.project.clips.filter((c) => c.mediaId !== mediaId);
   removeLayersUsingMedia(mediaId);
+  clearFieldMedia(state.project, mediaId);
   if (state.selection && !state.project.clips.some((c) => c.id === state.selection)) state.selection = null;
 }
 

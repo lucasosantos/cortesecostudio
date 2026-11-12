@@ -156,6 +156,8 @@ input[type=range] { accent-color: var(--accent); }
 .kf-btn.on { color: var(--kf); }
 .kf-nav { padding: 0 2px; border: 0; background: none; color: #555b6b; font-size: 10px; }
 .kf-nav:hover:not(:disabled) { color: var(--text); background: none !important; }
+.icon-btn { padding: 0 6px; min-width: 24px; line-height: 22px; }
+.icon-btn:disabled { opacity: .35; }
 .insp-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px 0; }
 .insp-note { color: var(--muted); padding: 4px 12px; font-size: 12px; line-height: 1.5; }
 .insp-note kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
@@ -280,6 +282,8 @@ body.mode-motion .preview-panel, body.mode-motion #inspector, body.mode-motion #
 #motion-inspector { grid-area: insp; border-right: 0; border-left: 1px solid var(--line); }
 #motion-timeline { grid-area: tl; }
 .motion-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.motion-tools .path-toggle { white-space: nowrap; }
+.motion-tools .path-toggle.active { background: #3a2f12; border-color: var(--kf, #ffd24a); color: #ffd24a; }
 .motion-tools .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .motion-tools button { padding: 4px 8px; min-width: 30px; }
 .motion-tools .hint { color: var(--muted); font-size: 11px; margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
@@ -456,3 +460,8 @@ textarea.ext-code { width: 100%; font: 13px/19px ui-monospace, SFMono-Regular, M
 .fp-typed { border: 1px dashed var(--line); margin: 6px 0; }
 .fp-actions { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
 .fp-actions button { flex: 1; }
+
+/* arrastar para ajustar (src/ui/scrub.js): seta lateral sobre os campos numéricos dos inspectors */
+#inspector input[type=number]:not(:focus):not(:disabled):not([readonly]),
+#motion-inspector input[type=number]:not(:focus):not(:disabled):not([readonly]) { cursor: ew-resize; }
+body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: none; }

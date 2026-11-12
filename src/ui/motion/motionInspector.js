@@ -20,10 +20,12 @@ import { h, clamp, toast } from '../util.js';
 import { fxKey, effectsSection, layerAnimSection } from '../fxPanel.js';
 import { textStyleRows, textAnimSection } from '../textStyle.js';
 import { fontPicker } from '../fontPicker.js';
+import { layerFieldsSection, compFieldsSection, fieldsKey } from '../compFields.js';
 
 
 let root;
 let builtKey = null;
+let builtComp = null; // desfazer/refazer recria o projeto: com outra composição, os controles precisam ser refeitos
 let bindings = [];
 let editing = false;
 let linkScale = true;
@@ -35,7 +37,7 @@ export function initMotionInspector(el) {
     if (state.mode !== 'motion') return;
     if (!['project', 'motion', 'motion-time', 'mode', 'media', 'extensions'].includes(reason)) return;
     const key = keyFor();
-    if (key !== builtKey) build();
+    if (key !== builtKey || currentComp() !== builtComp) build();
     else refresh();
   });
 }
@@ -45,7 +47,7 @@ function keyFor() {
   if (!comp) return 'none';
   const sel = selectedLayers(comp);
   const sig = sel.map((l) => `${l.id}/${l.type}/${l.shape || ''}/${l.fillOn}/${l.strokeOn}/${!!l.matte}/${l.locked}/${fxKey(l)}`).join(',');
-  return `${comp.id}|${sig}|${comp.layers.length}|${!!M().pathEdit}|${comp.background ? 1 : 0}`;
+  return `${comp.id}|${sig}|${comp.layers.length}|${!!M().pathEdit}|${comp.background ? 1 : 0}|${fieldsKey(comp)}`;
 }
 
 /** Cria o ponto de desfazer uma única vez por edição contínua (até o controle perder o foco). */
@@ -63,6 +65,7 @@ function build() {
   builtKey = keyFor();
   bindings = [];
   const comp = currentComp();
+  builtComp = comp;
   if (!comp) return root.replaceChildren(h('div.insp-note', {}, 'Nenhuma composição aberta.'));
   const sel = selectedLayers(comp);
   root.replaceChildren(...(sel.length === 1 ? layerPanel(comp, sel[0]) : sel.length > 1 ? multiPanel(comp, sel) : compPanel(comp)));
@@ -134,6 +137,8 @@ function compPanel(comp) {
         }, 'Excluir composição'),
       ),
     ),
+    h('h3', {}, 'Campos editáveis'),
+    compFieldsSection(comp, { beginEdit, endEdit }),
     h('h3', {}, 'Como usar'),
     h('div.insp-note', {},
       'Desenhe com as ferramentas acima do palco, selecione uma camada e use ', h('b', {}, '◆'), ' ao lado de uma propriedade para gravar um keyframe no playhead. ',
@@ -242,6 +247,8 @@ function layerPanel(comp, layer) {
     out.push(h('h3', {}, 'Texto'), textSection(layer));
     out.push(h('h3', {}, 'Animação do texto'), textAnimSection(layer, { beginEdit, endEdit, locked: () => !!layer.locked, span: () => layer.out - layer.in }));
   }
+  const fieldsSec = layerFieldsSection(comp, layer, { beginEdit, endEdit });
+  if (fieldsSec) out.push(h('h3', {}, 'Campo editável'), fieldsSec);
   if (layer.type === 'group') out.push(section(h('div.insp-note', {}, 'Grupos não aparecem no vídeo: servem de pai para mover, girar e escalar várias camadas juntas (escolha o pai na timeline).')));
 
   if (layer.type !== 'group') {

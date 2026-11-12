@@ -44,6 +44,7 @@ export function instantiateComp(data, mediaMap = {}, project = state.project) {
     if (l.matte) l.matte = ids[l.matte.layerId] ? { ...l.matte, layerId: ids[l.matte.layerId] } : null;
     if (l.type === 'image') l.mediaId = mediaMap[l.mediaId] || null;
   }
+  comp.fields = (comp.fields || []).filter((f) => ids[f.layerId]).map((f) => ({ ...f, id: uid('f'), layerId: ids[f.layerId] }));
   comp.id = uid('k');
   project.comps ||= [];
   const names = new Set(project.comps.map((c) => c.name));

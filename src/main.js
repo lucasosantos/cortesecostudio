@@ -13,6 +13,7 @@ import {
 import { openShortcuts } from './ui/shortcuts.js';
 import { initPreview } from './ui/preview.js';
 import { initInspector } from './ui/inspector.js';
+import { initScrub } from './ui/scrub.js';
 import { initMediaPanel, importDialog } from './ui/mediaPanel.js';
 import { openSettings, openExport, openMissingMedia, openNewComp } from './ui/dialogs.js';
 import { initMotion, enterMotion, exitMotion, handleMotionKey } from './ui/motion/workspace.js';
@@ -35,6 +36,7 @@ initLayout();
 initMediaPanel(document.getElementById('media-panel'));
 initPreview();
 initInspector(document.getElementById('inspector'));
+initScrub();
 initTimeline(document.getElementById('timeline'));
 initMotion();
 initAiBridge();

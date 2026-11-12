@@ -5,11 +5,13 @@ import { runtime } from '../../media/library.js';
 import { drawComp } from '../../motion/render.js';
 import { IDENTITY, apply, applyVec, invert, trs, shapePath, trace } from '../../motion/geometry.js';
 import {
-  currentComp, layerPropsAt, localBounds, worldMatrix, parentMatrix, layerActive, createLayer,
+  currentComp, layerPropsAt, localBounds, worldMatrix, parentMatrix, layerActive, createLayer, positionSnapshot, offsetPosition,
 } from '../../motion/model.js';
 import {
   M, tickMotion, selectLayers, setTool, addLayer, topLevelSelection, toggleMotionPlay, seekMotion, stepFrame, fps,
+  movePathMode, setMovePathMode,
 } from './actions.js';
+import { hasKeyframes } from '../../state/keyframes.js';
 import * as pen from './penTool.js';
 import { h, toast, formatTime, clamp } from '../util.js';
 import { MEDIA_MIME } from '../timeline.js';
@@ -31,7 +33,7 @@ const TOOLS = [
 ];
 const SHAPE_TOOLS = ['rect', 'ellipse', 'polygon', 'star', 'line'];
 const HINTS = {
-  select: 'Clique para selecionar · arraste para mover · alças redimensionam · círculo gira · duplo clique num caminho edita os pontos',
+  select: 'Clique para selecionar · arraste para mover (Ctrl+arraste alterna mover a trajetória inteira) · alças redimensionam · círculo gira · duplo clique num caminho edita os pontos',
   anchor: 'Arraste para reposicionar a âncora da camada selecionada (Alt desliga o ímã)',
   hand: 'Arraste para mover a vista · roda do mouse dá zoom',
   text: 'Clique onde o texto deve ficar',
@@ -39,7 +41,7 @@ const HINTS = {
 };
 const ACCENT = '#4f8cff';
 
-let panel, stageEl, canvas, ctx, toolsEl, hintEl, tcEl, playBtn, zoomLabel, emptyEl;
+let panel, stageEl, canvas, ctx, toolsEl, hintEl, tcEl, playBtn, zoomLabel, emptyEl, pathBtn;
 let hitCtx;
 let dpr = 1;
 let view = { zoom: 1, x: 0, y: 0 };
@@ -100,8 +102,13 @@ function buildTools() {
     return h('button', { title, dataset: { tool: id }, on: { click: () => chooseTool(id) } }, glyph);
   });
   zoomLabel = h('button', { title: 'Ajustar a composição à vista (0)', on: { click: fitView } }, '100%');
+  pathBtn = h('button.path-toggle', {
+    title: 'Mover trajetória: ao arrastar (ou usar as setas), todos os keyframes de posição da camada se movem juntos e a animação vai inteira para o novo lugar. Desligado, o arrasto muda só o keyframe no playhead. Ctrl+arraste inverte na hora.',
+    'aria-pressed': 'false',
+    on: { click: () => setMovePathMode(!movePathMode()) },
+  }, '⤧ Trajetória');
   hintEl = h('span.hint');
-  toolsEl.append(...btns, h('div.sep'), zoomLabel, hintEl);
+  toolsEl.append(...btns, h('div.sep'), pathBtn, zoomLabel, hintEl);
 }
 
 /** Troca de ferramenta, encerrando o desenho com a caneta se houver um em andamento. */
@@ -114,6 +121,8 @@ export function chooseTool(id) {
 function syncTools() {
   const m = M();
   for (const b of toolsEl.querySelectorAll('[data-tool]')) b.classList.toggle('active', b.dataset.tool === m.tool);
+  pathBtn.classList.toggle('active', movePathMode());
+  pathBtn.setAttribute('aria-pressed', String(movePathMode()));
   hintEl.textContent = m.pathEdit && !m.pathEdit.drawing
     ? 'Editando pontos: arraste pontos e alças · clique no traço cria ponto · Alt+clique alterna canto/curva · Del remove · Esc sai'
     : HINTS[m.tool] || 'Arraste no palco para desenhar (Shift mantém a proporção) · clique cria no tamanho padrão';
@@ -479,33 +488,108 @@ function startMove(comp, pos) {
     x: valueAt(layer, 'x', t),
     y: valueAt(layer, 'y', t),
     pm: parentMatrix(comp, layer, t),
+    snap: positionSnapshot(layer),
+    animated: hasKeyframes(layer, 'x') || hasKeyframes(layer, 'y'),
   }));
   if (!items.length) return null;
+  const box = selectionBox(comp, items.map((it) => it.layer), t);
   const begin = threshold(pos, checkpoint);
   return {
     move(e, cur) {
       if (!begin(cur)) return;
+      // trajetória inteira: o botão da barra liga; Ctrl inverte durante o arrasto
+      const wholePath = movePathMode() !== (e.ctrlKey || e.metaKey);
       let dx = cur.cx - pos.cx;
       let dy = cur.cy - pos.cy;
+      let lockX = false;
+      let lockY = false;
       if (e.shiftKey) {
-        if (Math.abs(dx) > Math.abs(dy)) dy = 0;
-        else dx = 0;
+        if (Math.abs(dx) > Math.abs(dy)) { dy = 0; lockY = true; } else { dx = 0; lockX = true; }
       }
       if (!e.altKey) {
-        // ímã: a âncora da primeira camada gruda no centro e nas bordas da composição
-        const [wx, wy] = apply(items[0].pm, items[0].x, items[0].y);
-        const thr = 6 / view.zoom;
-        for (const target of [0, comp.width / 2, comp.width]) if (Math.abs(wx + dx - target) < thr) dx = target - wx;
-        for (const target of [0, comp.height / 2, comp.height]) if (Math.abs(wy + dy - target) < thr) dy = target - wy;
+        // ímã (como no preview do vídeo): bordas e centro da caixa da seleção — e a âncora — grudam
+        // nas bordas e no centro da composição. Alt desliga.
+        const thr = 8 / view.zoom;
+        const [ax, ay] = apply(items[0].pm, items[0].x, items[0].y);
+        const xs = box ? [box.x0, (box.x0 + box.x1) / 2, box.x1, ax] : [ax];
+        const ys = box ? [box.y0, (box.y0 + box.y1) / 2, box.y1, ay] : [ay];
+        if (!lockX) dx += snapDelta(xs.map((v) => v + dx), [0, comp.width / 2, comp.width], thr);
+        if (!lockY) dy += snapDelta(ys.map((v) => v + dy), [0, comp.height / 2, comp.height], thr);
       }
       for (const it of items) {
         const inv = invert(it.pm) || IDENTITY;
         const [lx, ly] = applyVec(inv, dx, dy);
+        if (wholePath && it.animated) {
+          offsetPosition(it.layer, it.snap, lx, ly);
+          continue;
+        }
+        if (it.animated) offsetPosition(it.layer, it.snap, 0, 0); // trocou de modo no meio do arrasto: desfaz o deslocamento
         setLayerProp(it.layer, 'x', it.x + lx);
         setLayerProp(it.layer, 'y', it.y + ly);
       }
       emit('project');
     },
+  };
+}
+
+/** Caixa (na composição) que envolve as camadas no tempo t: { x0, y0, x1, y1 } ou null. */
+function selectionBox(comp, layers, t) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const layer of layers) {
+    const b = localBounds(layer, layerPropsAt(layer, t));
+    const m = worldMatrix(comp, layer, t);
+    for (const [u, v] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]) {
+      const [x, y] = apply(m, u, v);
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    }
+  }
+  return Number.isFinite(x0) ? { x0, y0, x1, y1 } : null;
+}
+
+/** Correção que leva o ponto mais próximo de um alvo até ele (0 se nenhum está a menos de `thr`). */
+function snapDelta(points, targets, thr) {
+  let best = 0;
+  let dist = thr;
+  for (const p of points) {
+    for (const target of targets) {
+      const d = Math.abs(target - p);
+      if (d < dist) { dist = d; best = target - p; }
+    }
+  }
+  return best;
+}
+
+/**
+ * Ponto da alça durante o arrasto (cursor + distância do clique até a alça), com ímã: a borda (ou ponta)
+ * arrastada gruda nas bordas e no centro da composição. Bordas só grudam com a camada sem giro (senão
+ * não são retas na tela). Alt desliga.
+ * @returns (e, cur, keepAspect) => { cx, cy } da alça
+ */
+function handleSnapper(comp, layer, g, pos) {
+  const m = worldMatrix(comp, layer, M().time);
+  const straight = Math.abs(m[1]) < 1e-6 && Math.abs(m[2]) < 1e-6;
+  const point = g.kind === 'end';
+  const snapX = point || (straight && !!g.hx);
+  const snapY = point || (straight && !!g.hy);
+  // distância entre o ponto agarrado e a alça (o clique raramente acerta o centro dela)
+  const offX = (g.pos[0] - view.x) / view.zoom - pos.cx;
+  const offY = (g.pos[1] - view.y) / view.zoom - pos.cy;
+  return (e, cur, keepAspect = false) => {
+    const hx = cur.cx + offX;
+    const hy = cur.cy + offY;
+    if (e.altKey || (!snapX && !snapY)) return { cx: hx, cy: hy };
+    const thr = 8 / view.zoom;
+    let dx = snapX ? snapDelta([hx], [0, comp.width / 2, comp.width], thr) : 0;
+    let dy = snapY ? snapDelta([hy], [0, comp.height / 2, comp.height], thr) : 0;
+    // com a proporção travada, as duas bordas não podem grudar ao mesmo tempo: vale a mais próxima
+    if (keepAspect && dx && dy) { if (Math.abs(dx) <= Math.abs(dy)) dy = 0; else dx = 0; }
+    return { cx: hx + dx, cy: hy + dy };
   };
 }
 
@@ -517,9 +601,11 @@ function startSize(comp, layer, g, pos) {
   if (!inv) return null;
   const local0 = trs(p0);
   const begin = threshold(pos, checkpoint);
+  const snap = handleSnapper(comp, layer, g, pos);
   return {
-    move(e, cur) {
-      if (!begin(cur)) return;
+    move(e, raw) {
+      if (!begin(raw)) return;
+      const cur = snap(e, raw, g.kind !== 'end' && e.shiftKey);
       const [lx, ly] = apply(inv, cur.cx, cur.cy);
       let x0 = 0;
       let y0 = 0;
@@ -587,12 +673,14 @@ function startScale(comp, layer, g, pos) {
     const dy = py - p0.y;
     return [dx * Math.cos(r) - dy * Math.sin(r), dx * Math.sin(r) + dy * Math.cos(r)];
   };
-  const v0 = vec(pos);
+  // da âncora até a alça (não até o clique): a escala é a razão entre onde a alça está e onde estava
+  const v0 = vec({ cx: (g.pos[0] - view.x) / view.zoom, cy: (g.pos[1] - view.y) / view.zoom });
   const begin = threshold(pos, checkpoint);
+  const snap = handleSnapper(comp, layer, g, pos);
   return {
-    move(e, cur) {
-      if (!begin(cur)) return;
-      const v = vec(cur);
+    move(e, raw) {
+      if (!begin(raw)) return;
+      const v = vec(snap(e, raw, !!(g.hx && g.hy && !e.shiftKey)));
       let fx = Math.abs(v0[0]) > 1e-3 ? v[0] / v0[0] : 1;
       let fy = Math.abs(v0[1]) > 1e-3 ? v[1] / v0[1] : 1;
       if (g.hx && g.hy && !e.shiftKey) {

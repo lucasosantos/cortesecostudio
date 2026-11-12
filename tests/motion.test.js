@@ -6,7 +6,7 @@ import {
 } from '../src/motion/geometry.js';
 import {
   createComp, createLayer, removeComp, removeLayers, duplicateLayers, moveLayer, setParent, worldMatrix, isDescendant,
-  layerPropsAt, localBounds, layerActive, shiftLayer, setCompDuration, getComp,
+  layerPropsAt, localBounds, layerActive, shiftLayer, setCompDuration, getComp, positionSnapshot, offsetPosition,
 } from '../src/motion/model.js';
 import { packComp, parseCompFile, instantiateComp, compMediaIds } from '../src/motion/compFile.js';
 
@@ -263,3 +263,23 @@ describe('arquivo de composição (.csmotion)', () => {
   });
 });
 
+
+describe('mover a trajetória inteira', () => {
+  it('desloca o valor fixo e todos os keyframes de posição, sem criar keyframes', () => {
+    const comp = createComp({ duration: 4 });
+    const layer = createLayer(comp, 'shape', { x: 100, y: 100 });
+    setKeyframe(layer, 'x', 0, 100);
+    setKeyframe(layer, 'x', 2, 500);
+    setKeyframe(layer, 'opacity', 1, 0.5);
+    const snap = positionSnapshot(layer);
+    offsetPosition(layer, snap, 50, -20);
+    expect(layer.keyframes.x.map((k) => [k.t, k.v])).toEqual([[0, 150], [2, 550]]);
+    expect(layer.keyframes.y).toBeUndefined();
+    expect(layer.props.y).toBe(80);
+    expect(layer.keyframes.opacity[0].v).toBe(0.5);
+    // a partir do mesmo retrato, o deslocamento não acumula (o arrasto chama a cada movimento)
+    offsetPosition(layer, snap, 10, 0);
+    expect(layer.keyframes.x.map((k) => k.v)).toEqual([110, 510]);
+    expect(layerPropsAt(layer, 1).x).toBeCloseTo(310, 6);
+  });
+});

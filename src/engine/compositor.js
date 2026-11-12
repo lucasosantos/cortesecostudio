@@ -235,7 +235,7 @@ function drawClipFx(ctx, clip, local, p, alpha, dx, dy, getSource, index, anim =
       } else if (comp) {
         const ct = Math.min(Math.max((clip.inPoint || 0) + local, 0), Math.max(0, comp.duration - 1e-4));
         c.scale(cw / comp.width, ch / comp.height);
-        drawComp(c, comp, ct, getSource);
+        drawComp(c, comp, ct, getSource, { fields: clip.fieldValues });
       } else {
         c.drawImage(src, 0, 0, cw, ch);
       }
@@ -257,7 +257,7 @@ function drawCompClip(ctx, clip, local, p, alpha, dx, dy, getSource, index, W, H
   const paint = (target, a) => withBox(target, p, a, dx, dy, (x, y, w, h) => {
     target.translate(x, y);
     target.scale(w / comp.width, h / comp.height);
-    drawComp(target, comp, ct, getSource);
+    drawComp(target, comp, ct, getSource, { fields: clip.fieldValues });
   });
   const total = Math.max(0, Math.min(1, p.opacity)) * alpha;
   if (total >= 0.999 || !W || !H) return paint(ctx, alpha);

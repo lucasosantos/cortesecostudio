@@ -262,23 +262,62 @@ function onPointerMove(e) {
     w = Math.max(4, w);
     hgt = Math.max(4, hgt);
     // posição: mantém o lado oposto fixo (ou o centro, com Ctrl)
-    let x = p.x;
-    let y = p.y;
-    if (e.ctrlKey) {
-      x = p.x + (p.width - w) / 2;
-      y = p.y + (p.height - hgt) / 2;
-    } else {
-      if (dir.includes('w')) x = p.x + (p.width - w);
-      else if (!dir.includes('e')) x = p.x + (p.width - w) / 2;
-      if (dir.includes('n')) y = p.y + (p.height - hgt);
-      else if (!dir.includes('s')) y = p.y + (p.height - hgt) / 2;
-    }
+    const place = (ww, hh) => {
+      let x = p.x;
+      let y = p.y;
+      if (e.ctrlKey) {
+        x = p.x + (p.width - ww) / 2;
+        y = p.y + (p.height - hh) / 2;
+      } else {
+        if (dir.includes('w')) x = p.x + (p.width - ww);
+        else if (!dir.includes('e')) x = p.x + (p.width - ww) / 2;
+        if (dir.includes('n')) y = p.y + (p.height - hh);
+        else if (!dir.includes('s')) y = p.y + (p.height - hh) / 2;
+      }
+      return [x, y];
+    };
+    if (!e.altKey && !p.rotation) [w, hgt] = snapResize(dir, w, hgt, place, keepAspect && p.height ? p.width / p.height : 0, e.ctrlKey);
+    const [x, y] = place(w, hgt);
     set('width', w);
     set('height', hgt);
     set('x', x);
     set('y', y);
   }
   emit('project');
+}
+
+/**
+ * Ímã ao redimensionar: a borda arrastada gruda nas bordas e no centro do quadro.
+ * @param place (w, h) => [x, y] posição da caixa para esse tamanho
+ * @param ratio proporção travada (largura/altura) ou 0
+ * @returns [w, h] corrigidos
+ */
+function snapResize(dir, w, hgt, place, ratio, centered) {
+  const { width: W, height: H } = state.project.settings;
+  const thr = 8 / scale;
+  // quanto a borda anda por unidade de tamanho: 1 (lado oposto fixo) ou ½ (redimensiona pelo centro, com Ctrl)
+  const k = centered ? 0.5 : 1;
+  const [x, y] = place(w, hgt);
+  const near = (edge, targets) => {
+    let best = null;
+    for (const target of targets) if (Math.abs(target - edge) < thr && (best === null || Math.abs(target - edge) < Math.abs(best))) best = target - edge;
+    return best;
+  };
+  const hx = dir.includes('e') ? 1 : dir.includes('w') ? -1 : 0;
+  const vy = dir.includes('s') ? 1 : dir.includes('n') ? -1 : 0;
+  const ex = hx ? near(hx > 0 ? x + w : x, [0, W / 2, W]) : null;
+  const ey = vy ? near(vy > 0 ? y + hgt : y, [0, H / 2, H]) : null;
+  if (ex === null && ey === null) return [w, hgt];
+  // com a proporção travada, só uma borda manda: a mais próxima do alvo
+  const useX = ex !== null && (ey === null || !ratio || Math.abs(ex) <= Math.abs(ey));
+  const useY = ey !== null && (!ratio || !useX);
+  let nw = useX ? w + (hx * ex) / k : w;
+  let nh = useY ? hgt + (vy * ey) / k : hgt;
+  if (ratio) {
+    if (useX) nh = nw / ratio;
+    else nw = nh * ratio;
+  }
+  return nw >= 4 && nh >= 4 ? [nw, nh] : [w, hgt];
 }
 
 function onPointerUp() {

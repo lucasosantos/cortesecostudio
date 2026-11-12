@@ -257,3 +257,16 @@ export function exitMotion() {
   emit('mode');
   emit('project');
 }
+
+// ---------------------------------------------------------------- mover trajetória
+const PATH_KEY = 'corteseco.motion.movePath';
+let movePath = (() => {
+  try { return typeof localStorage !== 'undefined' && localStorage.getItem(PATH_KEY) === '1'; } catch { return false; }
+})();
+/** Modo "mover trajetória": arrastar/setas deslocam todos os keyframes de posição juntos. */
+export const movePathMode = () => movePath;
+export function setMovePathMode(on) {
+  movePath = !!on;
+  try { localStorage.setItem(PATH_KEY, movePath ? '1' : '0'); } catch { /* vale só nesta sessão */ }
+  emit('motion');
+}

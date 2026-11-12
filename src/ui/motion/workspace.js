@@ -2,11 +2,12 @@
 import { state, emit, subscribe, checkpoint } from '../../state/project.js';
 import { setProp, valueAt } from '../../state/keyframes.js';
 import { IDENTITY, invert, applyVec } from '../../motion/geometry.js';
-import { currentComp, parentMatrix } from '../../motion/model.js';
+import { currentComp, parentMatrix, positionSnapshot, offsetPosition } from '../../motion/model.js';
 import {
   M, openComp, exitMotion, toggleMotionPlay, seekMotion, stepFrame, selectLayers, deleteSelection, duplicateSelection,
-  copySelection, pasteLayers, topLevelSelection,
+  copySelection, pasteLayers, topLevelSelection, movePathMode,
 } from './actions.js';
+import { hasKeyframes } from '../../state/keyframes.js';
 import { initStage, chooseTool, fitView } from './stage.js';
 import { initLayerTimeline } from './layerTimeline.js';
 import { initMotionInspector } from './motionInspector.js';
@@ -54,6 +55,10 @@ function nudge(dx, dy) {
     // o deslocamento é em pixels da composição; a posição da camada é relativa ao pai
     const inv = invert(parentMatrix(comp, layer, t)) || IDENTITY;
     const [lx, ly] = applyVec(inv, dx, dy);
+    if (movePathMode() && (hasKeyframes(layer, 'x') || hasKeyframes(layer, 'y'))) {
+      offsetPosition(layer, positionSnapshot(layer), lx, ly);
+      continue;
+    }
     setProp(layer, 'x', Math.round((valueAt(layer, 'x', t) + lx) * 100) / 100, t, state.autoKey);
     setProp(layer, 'y', Math.round((valueAt(layer, 'y', t) + ly) * 100) / 100, t, state.autoKey);
   }

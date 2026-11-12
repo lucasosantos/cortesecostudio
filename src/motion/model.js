@@ -221,6 +221,7 @@ export function removeLayers(comp, ids, t = 0) {
     if (layer.matte && gone.has(layer.matte.layerId)) layer.matte = null;
   }
   comp.layers = comp.layers.filter((l) => !gone.has(l.id));
+  if (comp.fields) comp.fields = comp.fields.filter((f) => !gone.has(f.layerId));
   state.motion.selection = state.motion.selection.filter((id) => !gone.has(id));
   state.motion.keySel = [];
 }
@@ -246,6 +247,26 @@ export function moveLayer(comp, id, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= comp.layers.length) return;
   [comp.layers[i], comp.layers[j]] = [comp.layers[j], comp.layers[i]];
+}
+
+/** Posição da camada (valor fixo e todos os keyframes de x/y) antes de mover a trajetória inteira. */
+export function positionSnapshot(layer) {
+  return {
+    x: layer.props.x, y: layer.props.y,
+    kx: (layer.keyframes?.x || []).map((k) => k.v), ky: (layer.keyframes?.y || []).map((k) => k.v),
+  };
+}
+
+/**
+ * Desloca a camada inteira no espaço: o valor fixo e todos os keyframes de posição somam (dx, dy),
+ * então a animação continua igual, só que em outro lugar. Não cria keyframes.
+ */
+export function offsetPosition(layer, snap, dx, dy) {
+  const r = (v) => Math.round(v * 100) / 100;
+  layer.props.x = r(snap.x + dx);
+  layer.props.y = r(snap.y + dy);
+  (layer.keyframes?.x || []).forEach((k, i) => { if (i < snap.kx.length) k.v = r(snap.kx[i] + dx); });
+  (layer.keyframes?.y || []).forEach((k, i) => { if (i < snap.ky.length) k.v = r(snap.ky[i] + dy); });
 }
 
 /** Move a camada no tempo levando os keyframes junto. */
