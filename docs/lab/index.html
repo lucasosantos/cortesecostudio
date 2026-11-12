@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FX Lab — CorteSeco Studio</title>
+  <meta name="description" content="Crie efeitos, transições e animações de entrada/saída em GLSL para o CorteSeco Studio, com pré-visualização ao vivo." />
+  <link rel="icon" href="../icon.png" />
+  <script type="module" crossorigin src="./assets/index-CDwtSatb.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BWaKS6NI.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="../" title="Voltar para a página do CorteSeco Studio"><img src="../icon.png" alt="" />CorteSeco<span>Studio</span></a>
+    <span class="lab-tag">FX Lab</span>
+    <div class="top-actions">
+      <div class="menu" id="menu-new">
+        <button class="btn" aria-haspopup="true">Novo ▾</button>
+        <div class="menu-pop wide" role="menu">
+          <h3>Visual (formulários, sem código)</h3>
+          <button data-new="effect" data-mode="visual" role="menuitem"><b>Efeito</b><span>Empilhe camadas: onda, cor, vinheta, granulação…</span></button>
+          <button data-new="transition" data-mode="visual" role="menuitem"><b>Transição</b><span>Escolha a forma da troca, curva, borda e clarão</span></button>
+          <button data-new="animation" data-mode="visual" role="menuitem"><b>Entrada/saída</b><span>Deslocamento, escala, giro e revelação</span></button>
+          <h3>Código GLSL</h3>
+          <button data-new="effect" data-mode="code" role="menuitem"><b>Efeito em código</b><span>vec4 effect(vec2 uv)</span></button>
+          <button data-new="transition" data-mode="code" role="menuitem"><b>Transição em código</b><span>vec4 transition(vec2 uv)</span></button>
+          <button data-new="animation" data-mode="code" role="menuitem"><b>Entrada/saída em código</b><span>vec4 animate(vec2 uv)</span></button>
+        </div>
+      </div>
+      <div class="menu" id="menu-examples">
+        <button class="btn" aria-haspopup="true">Exemplos ▾</button>
+        <div class="menu-pop wide" role="menu"></div>
+      </div>
+      <button class="btn" id="btn-open" title="Abrir .csfx.json ou uma transição .glsl do gl-transitions">Abrir arquivo</button>
+      <button class="btn" id="btn-share" title="Copia um link com a extensão inteira dentro dele">Copiar link</button>
+      <button class="btn primary" id="btn-download" title="Ctrl+S">Baixar .csfx.json</button>
+      <input type="file" id="file-input" accept=".json,.glsl,.csfx,application/json" hidden />
+    </div>
+  </header>
+
+  <main class="lab">
+    <section class="col col-code">
+      <div class="meta">
+        <label class="f grow"><span>Nome</span><input id="m-name" maxlength="80" /></label>
+        <label class="f"><span>Tipo</span>
+          <select id="m-kind">
+            <option value="effect">Efeito</option>
+            <option value="transition">Transição</option>
+            <option value="animation">Entrada/saída</option>
+          </select>
+        </label>
+        <label class="f"><span>Id</span><input id="m-id" maxlength="64" spellcheck="false" /></label>
+        <label class="f"><span>Autor</span><input id="m-author" maxlength="80" /></label>
+        <label class="f full"><span>Descrição</span><input id="m-desc" maxlength="400" placeholder="O que esta extensão faz (aparece na tela de instalação)" /></label>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Modo de edição">
+        <button role="tab" id="tab-btn-visual" aria-controls="tab-visual" data-tab="visual">Visual</button>
+        <button role="tab" id="tab-btn-code" aria-controls="tab-code" data-tab="code">Código</button>
+        <span class="mode-badge" id="mode-badge"></span>
+      </div>
+
+      <div class="tab-panel" id="tab-visual" role="tabpanel" aria-labelledby="tab-btn-visual">
+        <div class="banner" id="visual-banner" hidden></div>
+        <div class="builder" id="builder"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-code" role="tabpanel" aria-labelledby="tab-btn-code">
+        <div class="banner" id="code-banner" hidden></div>
+        <div class="code-head">
+          <span class="entry">Função de entrada: <code id="entry-sig"></code></span>
+          <button class="link" id="btn-ref">Referência</button>
+        </div>
+        <div class="ref" id="ref" hidden></div>
+        <div class="editor" id="editor">
+          <div class="gutter" id="gutter" aria-hidden="true"></div>
+          <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" aria-label="Código GLSL"></textarea>
+        </div>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="col col-side">
+      <div class="preview-wrap">
+        <canvas id="preview" width="640" height="360"></canvas>
+        <div class="readout" id="readout"></div>
+      </div>
+      <div class="transport">
+        <button class="btn icon" id="btn-play" title="Tocar/pausar (espaço fora do editor)">❚❚</button>
+        <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Posição no ciclo" />
+        <label class="f inline"><span>Duração</span>
+          <select id="duration">
+            <option value="0.5">0,5 s</option>
+            <option value="1" selected>1 s</option>
+            <option value="1.5">1,5 s</option>
+            <option value="2.5">2,5 s</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="sources">
+        <div class="src" id="src-a">
+          <span class="src-label" id="src-a-label">Imagem</span>
+          <select data-src="a"><option value="test">Imagem de teste A</option><option value="file">Arquivo…</option></select>
+        </div>
+        <div class="src" id="src-b">
+          <span class="src-label">Cena nova</span>
+          <select data-src="b"><option value="test">Imagem de teste B</option><option value="file">Arquivo…</option></select>
+        </div>
+        <div class="src" id="src-bg">
+          <span class="src-label">Fundo</span>
+          <select id="anim-bg"><option value="checker">Xadrez (transparente)</option><option value="b">Imagem de teste B</option></select>
+        </div>
+        <input type="file" id="media-input" accept="image/*,video/*" hidden />
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Parâmetros do app</h2>
+          <button class="btn small" id="btn-add-param">+ Parâmetro</button>
+        </div>
+        <p class="hint" id="params-hint">Viram controles no inspector do app (e aceitam keyframes). O valor ajustado aqui é o padrão.</p>
+        <div id="params"></div>
+      </div>
+
+      <div class="panel install">
+        <h2>Usar no CorteSeco Studio</h2>
+        <ol>
+          <li><b>Desktop:</b> baixe o <code>.csfx.json</code> e arraste para a janela do app (ou Extensões → Instalar).</li>
+          <li><b>Navegador:</b> <button class="link" id="btn-install-web">instalar direto no app web</button> e abrir o editor.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

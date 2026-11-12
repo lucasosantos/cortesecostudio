@@ -15,6 +15,7 @@ npm run dist:win    # gera instalador .exe (rodar no Windows)
 npm run dev:web     # versão navegador (Chrome/Edge)
 npm run build:web   # site estático em dist/
 npm run build:pages # versão de navegador em docs/app/ (GitHub Pages serve a pasta docs/)
+npm run build:lab   # FX Lab (editor de efeitos/transições em GLSL) em docs/lab/ — dev: npm run dev:lab
 npm test            # testes unitários (Vitest)
 ```
 
