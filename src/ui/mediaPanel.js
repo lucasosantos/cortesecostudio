@@ -1,7 +1,8 @@
 // Biblioteca de mídia: importar, listar, arrastar para a timeline, reapontar arquivos ausentes.
 import { state, emit, subscribe, checkpoint } from '../state/project.js';
 import { runtime, importFiles, removeMedia, isMissing, MEDIA_ACCEPT, attachBlob } from '../media/library.js';
-import { pickFiles, pathForFile } from '../platform/index.js';
+import { pickFiles, pathForFile, saveFile } from '../platform/index.js';
+import { COMP_EXT, exportCompText } from '../motion/compFile.js';
 import { placeMedia, placeComp, MEDIA_MIME, COMP_MIME } from './timeline.js';
 import { h, formatDuration, toast } from './util.js';
 import { withIcon } from './icons.js';
@@ -19,9 +20,10 @@ export function initMediaPanel(el) {
   grid = h('div.media-grid');
   root.append(
     h('h3', {}, h('span.grow', {}, 'Mídia'), h('button', { on: { click: importDialog } }, 'Importar')),
-    h('div.media-drop', {}, 'Arraste arquivos de vídeo, áudio ou imagem aqui'),
+    h('div.media-drop', {}, 'Arraste arquivos de vídeo, áudio ou imagem aqui · SVG vira composição vetorial editável'),
     grid,
-    h('h3', {}, h('span.grow', {}, 'Composições'), h('button', { title: 'Nova composição de motion design', on: { click: openNewComp } }, 'Nova')),
+    h('h3', {}, h('span.grow', {}, 'Composições'), h('button', { title: 'Importar uma composição exportada (.csmotion) ou um SVG', on: { click: importCompDialog } }, 'Importar'),
+      h('button', { title: 'Nova composição de motion design', on: { click: openNewComp } }, 'Nova')),
     (compEmpty = h('div.insp-note', {}, 'Composições são animações de formas, textos e vetores que entram na timeline como um clipe.')),
     (compGrid = h('div.media-grid')),
   );
@@ -35,7 +37,7 @@ export function initMediaPanel(el) {
     e.preventDefault();
     e.stopPropagation();
     root.classList.remove('dragover');
-    await importFiles([...e.dataTransfer.files]);
+    reportImport(await importFiles([...e.dataTransfer.files]));
   });
   subscribe((r) => { if (r === 'media' || r === 'project' || r === 'mode') timed('mediaPanel', render); });
   render();
@@ -43,7 +45,37 @@ export function initMediaPanel(el) {
 
 export async function importDialog() {
   const files = await pickFiles({ accept: MEDIA_ACCEPT, multiple: true });
-  if (files.length) await importFiles(files);
+  if (files.length) reportImport(await importFiles(files));
+}
+
+/** Salva a composição num arquivo .csmotion (com as imagens embutidas) para usar em outros projetos. */
+export async function exportCompDialog(comp) {
+  if (!comp) return;
+  try {
+    const text = await exportCompText(comp);
+    const safe = comp.name.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'composicao';
+    const saved = await saveFile(`${safe}.${COMP_EXT}`, new TextEncoder().encode(text), [{ name: 'Composição CorteSeco Studio', extensions: [COMP_EXT] }]);
+    if (saved) toast(`Composição exportada: ${saved}`);
+  } catch (err) {
+    toast(`Não foi possível exportar "${comp.name}": ${err.message}`, 'error');
+  }
+}
+
+/** Importa composições exportadas (.csmotion) ou SVGs como composições novas. */
+export async function importCompDialog() {
+  const files = await pickFiles({ accept: `.${COMP_EXT},.svg,image/svg+xml`, multiple: true });
+  if (!files.length) return;
+  checkpoint();
+  reportImport(await importFiles(files));
+}
+
+/** Avisa quando arquivos viraram composições (SVG vetorial / composição exportada). */
+export function reportImport(result) {
+  const n = result?.comps?.length || 0;
+  if (!n) return;
+  const names = result.comps.map((c) => `"${c.name}"`).join(', ');
+  const extra = result.warnings.length ? ' · ' + result.warnings.join(' · ') : '';
+  toast(`${n > 1 ? 'Composições criadas' : 'Composição criada'}: ${names} — duplo clique para editar as curvas${extra}`);
 }
 
 // A grade só é refeita quando a lista muda: emit('project') acontece a cada movimento do mouse num arrasto.
@@ -185,6 +217,10 @@ function renderComps() {
     },
     h('div.thumb', {}, entry.canvas),
     h('span.badge', {}, 'MOTION'),
+    h('button.export', {
+      title: 'Exportar a composição (.csmotion) para usar em outros projetos',
+      on: { click: (e) => { e.stopPropagation(); exportCompDialog(getCompById(id)); } },
+    }, '⤓'),
     h('button.remove', {
       title: 'Excluir a composição (e os clipes que a usam)',
       on: {

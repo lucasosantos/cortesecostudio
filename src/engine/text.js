@@ -204,7 +204,8 @@ export function drawText(ctx, item, x, y, w, h, time = null) {
   const strokes = [];
   if (f.stroke2Width > 0) strokes.push({ color: f.stroke2 || '#ffffff', width: ((f.strokeWidth || 0) + f.stroke2Width) * 2 });
   if (f.strokeWidth > 0) strokes.push({ color: f.stroke || '#000', width: f.strokeWidth * 2 });
-  const passes = [...strokes.map((s) => ({ stroke: s })), { fill: true }];
+  // sem preenchimento (texto vazado): só os contornos, o miolo das letras fica transparente
+  const passes = [...strokes.map((s) => ({ stroke: s })), ...(f.noFill ? [] : [{ fill: true }])];
   const shadow = f.shadowColor && (f.shadowBlur > 0 || f.shadowX || f.shadowY);
 
   passes.forEach((pass, pi) => {

@@ -3,16 +3,49 @@ import { Input, BlobSource, UrlSource, ALL_FORMATS, CanvasSink, AudioBufferSink 
 import { state, uid, emit } from '../state/project.js';
 import { pathForFile, mediaUrlFor, readFileByPath } from '../platform/index.js';
 import { createPeaks, addSamples } from './peaks.js';
-import { removeLayersUsingMedia } from '../motion/model.js';
+import { removeLayersUsingMedia, createComp } from '../motion/model.js';
+import { importSvg } from '../motion/svgImport.js';
+import { COMP_EXT, importCompText } from '../motion/compFile.js';
 
 /** Dados de runtime (não serializados), por id de mídia. */
 export const runtime = new Map();
 
 const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'opus', 'weba'];
 const VIDEO_EXT = ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'ogv'];
-const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'];
+const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+// SVG não entra como imagem: vira uma composição com camadas vetoriais editáveis
+const VECTOR_EXT = ['svg'];
 
-export const MEDIA_ACCEPT = [...AUDIO_EXT, ...VIDEO_EXT, ...IMAGE_EXT].map((e) => '.' + e).join(',') + ',video/*,audio/*,image/*';
+export const MEDIA_ACCEPT = [...AUDIO_EXT, ...VIDEO_EXT, ...IMAGE_EXT, ...VECTOR_EXT, COMP_EXT].map((e) => '.' + e).join(',') + ',video/*,audio/*,image/*';
+
+/** Arquivo que vira composição (SVG vetorial ou composição exportada), ou null. */
+function compKind(name, mime = '') {
+  const ext = name.split('.').pop().toLowerCase();
+  if (ext === COMP_EXT) return 'comp';
+  if (VECTOR_EXT.includes(ext) || mime === 'image/svg+xml') return 'svg';
+  return null;
+}
+
+/**
+ * Cria uma composição a partir do texto de um SVG (cada forma vira uma camada de caminho).
+ * @returns { comp, warnings }
+ */
+export function importSvgText(text, name = 'SVG') {
+  const comp = createComp({ name: name.replace(/\.svg$/i, '') || 'SVG' });
+  try {
+    const result = importSvg(comp, text, name);
+    return { comp, warnings: result.warnings };
+  } catch (err) {
+    state.project.comps = state.project.comps.filter((c) => c !== comp);
+    throw err;
+  }
+}
+
+/** Importa um arquivo que vira composição. @returns { comp, warnings } */
+async function importCompSource(kind, name, text) {
+  if (kind === 'comp') return { comp: await importCompText(text), warnings: [] };
+  return importSvgText(text, name);
+}
 
 function guessType(name, mime = '') {
   const ext = name.split('.').pop().toLowerCase();
@@ -40,10 +73,27 @@ export function openInput(mediaId) {
   return new Input({ source: inputSource(rt), formats: ALL_FORMATS });
 }
 
-/** Importa arquivos (File[]) para a biblioteca do projeto. */
+/**
+ * Importa arquivos (File[]) para a biblioteca do projeto.
+ * @returns { media: media[], comps: comp[], warnings: string[] } — SVGs e .csmotion viram composições
+ */
 export async function importFiles(files) {
   const added = [];
+  const comps = [];
+  const warnings = [];
   for (const file of files) {
+    const kind = compKind(file.name, file.type);
+    if (kind) {
+      try {
+        const r = await importCompSource(kind, file.name, await file.text());
+        comps.push(r.comp);
+        warnings.push(...r.warnings);
+      } catch (err) {
+        console.error('Falha ao importar', file.name, err);
+        alert(`Não foi possível importar "${file.name}": ${err.message}`);
+      }
+      continue;
+    }
     let type = guessType(file.name, file.type);
     if (!type) continue;
     const media = { id: uid('m'), name: file.name, type, path: pathForFile(file), duration: 0, width: 0, height: 0, hasAudio: false, size: file.size };
@@ -58,7 +108,8 @@ export async function importFiles(files) {
     added.push(media);
   }
   if (added.length) emit('media');
-  return added;
+  if (comps.length) emit('project');
+  return { media: added, comps, warnings };
 }
 
 /** Associa um Blob a uma entrada de mídia, lendo metadados e gerando prévias. */
@@ -102,6 +153,18 @@ export async function importPaths(paths) {
   for (const p of paths) {
     const filePath = String(p);
     const name = filePath.split(/[\\/]/).pop();
+    const kind = compKind(name);
+    if (kind) {
+      try {
+        const bytes = await readFileByPath(filePath);
+        if (!bytes) { failed.push({ path: filePath, error: 'file not found or unreadable' }); continue; }
+        await importCompSource(kind, name, new TextDecoder().decode(bytes));
+        emit('project');
+      } catch (err) {
+        failed.push({ path: filePath, error: err.message });
+      }
+      continue;
+    }
     const type = guessType(name);
     if (!type) { failed.push({ path: filePath, error: 'unsupported file type' }); continue; }
     const media = { id: uid('m'), name, type, path: filePath, duration: 0, width: 0, height: 0, hasAudio: false, size: 0 };

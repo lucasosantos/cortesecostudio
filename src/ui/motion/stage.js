@@ -13,6 +13,7 @@ import {
 import * as pen from './penTool.js';
 import { h, toast, formatTime, clamp } from '../util.js';
 import { MEDIA_MIME } from '../timeline.js';
+import { importSvg } from '../../motion/svgImport.js';
 import { count, timed } from '../../perf.js';
 
 const TOOLS = [
@@ -709,7 +710,8 @@ function startCreate(comp, kind, pos) {
 
 // ---------------------------------------------------------------- soltar imagens da biblioteca
 function onDragOver(e) {
-  if (![...e.dataTransfer.types].includes(MEDIA_MIME) || !currentComp()) return;
+  const types = [...e.dataTransfer.types];
+  if (!(types.includes(MEDIA_MIME) || types.includes('Files')) || !currentComp()) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
   stageEl.classList.add('drop-target');
@@ -717,6 +719,13 @@ function onDragOver(e) {
 
 function onDrop(e) {
   stageEl.classList.remove('drop-target');
+  const svgs = [...(e.dataTransfer.files || [])].filter((f) => /\.svg$/i.test(f.name) || f.type === 'image/svg+xml');
+  if (svgs.length && currentComp()) {
+    e.preventDefault();
+    e.stopPropagation();
+    dropSvgs(svgs);
+    return;
+  }
   const media = getMedia(e.dataTransfer.getData(MEDIA_MIME));
   if (!media || !currentComp()) return;
   e.preventDefault();
@@ -724,4 +733,25 @@ function onDrop(e) {
   if (media.type !== 'image') return toast('Composições aceitam imagens; vídeo e áudio ficam na timeline principal', 'error');
   const pos = eventPos(e);
   addLayer('image', { media, x: pos.cx, y: pos.cy });
+}
+
+/** SVG solto no palco: as formas entram como camadas vetoriais na composição aberta. */
+async function dropSvgs(files) {
+  const comp = currentComp();
+  const ids = [];
+  const warnings = [];
+  checkpoint();
+  for (const file of files) {
+    try {
+      const r = importSvg(comp, await file.text(), file.name);
+      ids.push(r.root.id);
+      warnings.push(...r.warnings);
+    } catch (err) {
+      toast(`Não foi possível importar ${file.name}: ${err.message}`, 'error');
+    }
+  }
+  if (!ids.length) return;
+  selectLayers(ids);
+  emit('project');
+  toast(`SVG importado como camadas vetoriais${warnings.length ? ' · ' + warnings.join(' · ') : ''}`);
 }

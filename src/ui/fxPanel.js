@@ -295,7 +295,7 @@ export function layerAnimSection(layer, key, env) {
   const params = spec() ? transitionParamRows(spec(), env) : [];
   const missing = spec() && !getExtension(transitionExtId(spec().type))
     ? h('div.insp-warn', {}, 'Esta extensão não está instalada nesta máquina; a animação não aparece. Instale-a em "Extensões".') : null;
-  sec.append(h('div.insp-row', {}, h('label', {}, 'Tipo'), h('div.ctrl', {}, type)), durRow, ...params, missing,
+  sec.append(h('div.insp-row', {}, h('label', {}, 'Tipo'), h('div.ctrl', {}, type)), durRow, ...params, missing || '',
     h('div.insp-note', {}, key === 'animIn' ? 'Toca a partir do início da camada ("Visível de").' : 'Termina no fim da camada ("até").'));
   env.bindings.push(() => {
     const a = spec();

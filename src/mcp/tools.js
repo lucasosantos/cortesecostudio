@@ -17,6 +17,7 @@ import {
 import { PRESETS, applyPreset } from '../motion/presets.js';
 import { parseSvgPath } from '../motion/svgPath.js';
 import { importSvg } from '../motion/svgImport.js';
+import { DEFAULT_FONTS, installedFamilies, familyCss } from '../fonts.js';
 import { drawComp } from '../motion/render.js';
 import {
   listExtensions, getExtension, createEffect, validateExtension, installExtension, transitionKnown, transitionOptions, transitionExtId,
@@ -167,7 +168,7 @@ function applyClipProps(clip, props) {
 }
 
 const FONT_KEYS = {
-  family: 'string', size: 'number', color: 'color', bold: 'boolean', italic: 'boolean', align: 'align', stroke: 'color', strokeWidth: 'number',
+  family: 'string', size: 'number', color: 'color', bold: 'boolean', italic: 'boolean', noFill: 'boolean', align: 'align', stroke: 'color', strokeWidth: 'number',
   stroke2: 'color', stroke2Width: 'number', color2: 'colorOrEmpty', letterSpacing: 'signed', lineHeight: 'number', upper: 'boolean',
   shadowColor: 'colorOrEmpty', shadowX: 'signed', shadowY: 'signed', shadowBlur: 'number',
   bg: 'colorOrEmpty', bgPad: 'number', bgRadius: 'number', bgMode: 'bgMode',
@@ -452,6 +453,11 @@ export const TOOLS = {
         ...Object.keys(NATIVE_TRANSITIONS).map((type) => ({ type, name: NATIVE_TRANSITIONS[type], ...(type === 'slide' ? { options: 'direction: left|right|up|down' } : type === 'flash' ? { options: 'color: #rrggbb' } : {}) })),
         ...listExtensions('transition').map((e) => ({ type: `ext:${e.id}`, name: e.name, params: params(e) })),
       ],
+      fonts: {
+        defaults: DEFAULT_FONTS.map(([family]) => family),
+        installed: installedFamilies().map((f) => familyCss(f.family)),
+        note: 'font.family is a CSS font-family list. Any font installed on the operating system also works by name, e.g. "\\"Roboto Slab\\", sans-serif".',
+      },
       entryExitAnimations: listExtensions('animation').map((e) => ({ type: `ext:${e.id}`, name: e.name, description: e.description || '', params: params(e) })),
       transitionRules: 'clip.transition joins a clip with the previous clip that ends exactly where it starts, on the same track. animIn/animOut animate the clip alone and accept the transitions above or the entryExitAnimations. Motion layers accept animIn/animOut with entryExitAnimations only (they play from layer.in and end at layer.out).',
       masks: { shapes: Object.keys(MASK_SHAPES), coordinates: 'fractions 0-1 of the clip box', animatable: ['x', 'y', 'w', 'h', 'radius', 'feather'] },

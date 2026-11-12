@@ -141,7 +141,7 @@
           },
           "font": {
             "type": "object",
-            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), noFill (true = hollow letters, only the outlines are drawn), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
           },
           "textAnim": {
             "type": [
@@ -183,7 +183,7 @@
           },
           "font": {
             "type": "object",
-            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), noFill (true = hollow letters, only the outlines are drawn), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
           },
           "props": {
             "type": "object",
@@ -570,7 +570,7 @@
           },
           "font": {
             "type": "object",
-            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), noFill (true = hollow letters, only the outlines are drawn), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
           },
           "mediaId": {
             "type": "string",
@@ -716,7 +716,7 @@
           },
           "font": {
             "type": "object",
-            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
+            "description": "Text style (only the fields you pass change): family, size, color, bold, italic, align (left|center|right), stroke + strokeWidth (outline, px), noFill (true = hollow letters, only the outlines are drawn), stroke2 + stroke2Width (second outline outside the first), color2 (bottom color of a vertical gradient; \"\" = none), letterSpacing (px, may be negative), lineHeight (× size, default 1.2), upper (all caps), shadowColor (\"#rrggbbaa\", \"\" = no shadow) + shadowX/shadowY/shadowBlur (px), bg (background box color \"#rrggbbaa\", \"\" = none) + bgPad, bgRadius (px), bgMode (block|line)."
           },
           "fillOn": {
             "type": "boolean"

@@ -2,6 +2,7 @@ import './styles.css';
 import {
   state, emit, checkpoint, undo, redo, getClip, getTrack, orderedTracks, overlaps, addTrack, createTextClip,
   findFreeSlot, serializeProject, loadProject, newProject, newMotionState, resetHistory, uid, projectDuration, subscribe,
+  setFileExtras,
 } from './state/project.js';
 import { attachPath, clearRuntime, isMissing } from './media/library.js';
 import { togglePlay, pause, seek, releaseAll } from './engine/player.js';
@@ -27,6 +28,7 @@ import { initProxies } from './media/proxy.js';
 import { setSoftwareRendering } from './ui/preview.js';
 import { glRenderer, isSoftwareRenderer } from './fx/gl.js';
 import { applyIcons } from './ui/icons.js';
+import { initFonts, loadPackedFonts, packFonts } from './fonts.js';
 
 applyIcons();
 initLayout();
@@ -38,6 +40,12 @@ initMotion();
 initAiBridge();
 initAiPanel();
 initProxies();
+// fontes instaladas no app: carregam em segundo plano e os textos são redesenhados quando chegam
+setFileExtras((project) => {
+  const fonts = packFonts(project);
+  return fonts.length ? { fonts } : {};
+});
+initFonts().then(() => emit('project'));
 // sem placa de vídeo, a qualidade automática do preview cai pela metade (verificado com a máquina ociosa)
 (window.requestIdleCallback || setTimeout)(() => setSoftwareRendering(isSoftwareRenderer(glRenderer())));
 
@@ -125,6 +133,8 @@ async function openProject() {
     pause();
     releaseAll();
     clearRuntime();
+    // as fontes embutidas precisam estar carregadas antes de medir/desenhar os textos
+    await loadPackedFonts(data.fonts);
     loadProject(data);
   } catch (err) {
     return toast('Não foi possível abrir o projeto: ' + err.message, 'error');

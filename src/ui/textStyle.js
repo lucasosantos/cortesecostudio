@@ -48,9 +48,25 @@ export function textStyleRows(item, env) {
   const details = (rows, visible) => h('div', { style: { display: visible ? '' : 'none' } }, ...rows);
 
   // contornos
-  const outline = row('Contorno',
-    color(f.stroke || '#000000', (v) => paint(() => { f.stroke = v; })),
-    num(f.strokeWidth || 0, (v) => sized(() => { f.strokeWidth = Math.max(0, v); }), { min: 0, title: 'Espessura (0 = sem contorno)' }), unit('px'));
+  const strokeNum = num(f.strokeWidth || 0, (v) => sized(() => { f.strokeWidth = Math.max(0, v); }), { min: 0, title: 'Espessura (0 = sem contorno)' });
+  const strokeColor = color(f.stroke || '#000000', (v) => paint(() => { f.stroke = v; }));
+  const outline = row('Contorno', strokeColor, strokeNum, unit('px'));
+
+  // preenchimento: desligado, sobra só o contorno (texto vazado)
+  const fill = row('Preencher',
+    h('label.toggle-row', { style: { padding: 0 }, title: 'Desmarque para deixar as letras vazadas, só com o contorno' },
+      check(!f.noFill, (on) => sized(() => {
+        f.noFill = !on;
+        // sem preenchimento e sem contorno o texto sumiria: liga um contorno
+        if (f.noFill && !(f.strokeWidth > 0)) {
+          f.strokeWidth = Math.max(2, Math.round(f.size * 0.03));
+          // o contorno assume a cor que as letras tinham
+          f.stroke = f.color || '#ffffff';
+          strokeNum.value = f.strokeWidth;
+          strokeColor.value = f.stroke.slice(0, 7);
+        }
+      })),
+      'Letras preenchidas'));
   const outline2 = row('2º contorno',
     color(f.stroke2 || '#ffffff', (v) => paint(() => { f.stroke2 = v; })),
     num(f.stroke2Width || 0, (v) => sized(() => { f.stroke2Width = Math.max(0, v); }), { min: 0, title: 'Borda por fora do primeiro contorno (0 = sem)' }), unit('px'));
@@ -111,7 +127,7 @@ export function textStyleRows(item, env) {
     num(f.lineHeight || 1.2, (v) => sized(() => { f.lineHeight = Math.max(0.5, v); }), { step: 0.05, min: 0.5, title: 'Altura da linha (× tamanho da fonte)' }), unit('linha'));
   const upper = h('label.toggle-row', {}, check(!!f.upper, (on) => sized(() => { f.upper = on; })), 'Tudo em maiúsculas');
 
-  return [outline, outline2, grad, shadow, shadowDetails, bg, bgDetails, spacing, upper];
+  return [fill, outline, outline2, grad, shadow, shadowDetails, bg, bgDetails, spacing, upper];
 }
 
 /** Quantas unidades (letras, palavras, linhas) o texto tem. */

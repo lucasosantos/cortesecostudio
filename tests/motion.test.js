@@ -8,6 +8,7 @@ import {
   createComp, createLayer, removeComp, removeLayers, duplicateLayers, moveLayer, setParent, worldMatrix, isDescendant,
   layerPropsAt, localBounds, layerActive, shiftLayer, setCompDuration, getComp,
 } from '../src/motion/model.js';
+import { packComp, parseCompFile, instantiateComp, compMediaIds } from '../src/motion/compFile.js';
 
 const near = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 6));
 
@@ -227,3 +228,38 @@ describe('composições e camadas', () => {
     expect(state.mode).toBe('edit');
   });
 });
+
+describe('arquivo de composição (.csmotion)', () => {
+  it('exporta e importa com ids novos, mantendo hierarquia, matte, keyframes e imagens', () => {
+    const comp = createComp({ name: 'Logo', width: 640, height: 360, duration: 3 });
+    const group = createLayer(comp, 'group');
+    const shape = createLayer(comp, 'shape', { shape: 'ellipse' });
+    const img = createLayer(comp, 'image', { media: { id: 'm1', width: 100, height: 50, name: 'a.png' } });
+    shape.parentId = group.id;
+    img.matte = { layerId: shape.id, mode: 'alpha' };
+    shape.keyframes.opacity = [{ t: 0, v: 0, ease: 'linear' }, { t: 1, v: 1, ease: 'linear' }];
+    expect(compMediaIds(comp)).toEqual(['m1']);
+
+    const data = parseCompFile(JSON.stringify(packComp(comp, [{ id: 'm1', name: 'a.png', data: '' }])));
+    const copy = instantiateComp(data, { m1: 'm99' });
+    expect(copy.id).not.toBe(comp.id);
+    expect(copy.name).toBe('Logo (2)');
+    expect(state.project.comps).toHaveLength(2);
+    const ids = new Set(comp.layers.map((l) => l.id));
+    expect(copy.layers.every((l) => !ids.has(l.id))).toBe(true);
+    const [cImg, cShape, cGroup] = copy.layers;
+    expect(cShape.parentId).toBe(cGroup.id);
+    expect(cImg.matte.layerId).toBe(cShape.id);
+    expect(cImg.mediaId).toBe('m99');
+    expect(cShape.keyframes.opacity).toHaveLength(2);
+    // o original não é tocado
+    expect(img.mediaId).toBe('m1');
+    expect(shape.parentId).toBe(group.id);
+  });
+
+  it('recusa arquivos que não são composições', () => {
+    expect(() => parseCompFile('{"project":{}}')).toThrow();
+    expect(() => parseCompFile('nada')).toThrow();
+  });
+});
+

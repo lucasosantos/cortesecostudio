@@ -9,7 +9,17 @@ const COLUMNS = ['media', 'preview', 'insp'];
 const KEY = 'mineeditor.panels';
 const OLD_KEY = 'mineeditor.layout';
 
-export const DEFAULT_LAYOUT = { order: ['media', 'preview', 'insp'], hidden: {}, tall: null, tlPos: 'bottom', tlH: null, pvW: null };
+export const DEFAULT_LAYOUT = { order: ['media', 'preview', 'insp'], hidden: {}, tall: null, tlPos: 'bottom', tlH: null, pvW: null, mediaW: null, inspW: null };
+// largura de cada coluna: variável CSS, padrão e a chave do arranjo onde fica salva
+const WIDTH = {
+  media: { v: '--media-w', def: '260px', key: 'mediaW' },
+  preview: { v: '--pv-w', def: '34vw', key: 'pvW' },
+  insp: { v: '--insp-w', def: '300px', key: 'inspW' },
+};
+// painéis de cada coluna (o do workspace de motion ocupa o mesmo lugar)
+const COLUMN_PANELS = { media: ['#media-panel'], preview: ['.preview-panel', '#motion-stage-panel'], insp: ['#inspector', '#motion-inspector'] };
+const MIN_COL = 180;
+const MIN_FLEX = 240;
 export const PRESETS = {
   classic: ['Padrão', { order: ['media', 'preview', 'insp'], tall: null, tlPos: 'bottom' }],
   'vertical-right': ['Vertical (preview à direita)', { order: ['media', 'insp', 'preview'], tall: 'preview', tlPos: 'bottom' }],
@@ -46,7 +56,9 @@ export function sanitizeLayout(raw) {
   if (COLUMNS.includes(raw.tall)) out.tall = raw.tall;
   if (raw.tlPos === 'top') out.tlPos = 'top';
   if (typeof raw.tlH === 'string' && /^\d+(\.\d+)?(px|vh)$/.test(raw.tlH)) out.tlH = raw.tlH;
-  if (typeof raw.pvW === 'string' && /^\d+(\.\d+)?(px|vw)$/.test(raw.pvW)) out.pvW = raw.pvW;
+  for (const key of ['pvW', 'mediaW', 'inspW']) {
+    if (typeof raw[key] === 'string' && /^\d+(\.\d+)?(px|vw)$/.test(raw[key])) out[key] = raw[key];
+  }
   return out;
 }
 
@@ -59,12 +71,13 @@ export function gridFor(l) {
   const tl = !l.hidden.tl;
   // altura inteira só faz sentido com a timeline visível e outra coluna para ficar acima dela
   const tall = tl && cols.length > 1 && cols.includes(l.tall) ? l.tall : null;
-  const fixed = { media: 'var(--media-w, 260px)', insp: 'var(--insp-w, 300px)' };
-  const widths = cols.map((c, i) => {
-    if (tall === 'preview') return c === 'preview' ? 'var(--pv-w, 34vw)' : 'minmax(200px, 1fr)';
-    // o preview estica; sem ele, a última coluna ocupa a sobra
-    const flexible = cols.includes('preview') ? c === 'preview' : i === cols.length - 1;
-    return flexible ? 'minmax(0, 1fr)' : fixed[c];
+  // uma coluna estica e as outras têm largura própria (ajustável pelas alças entre colunas):
+  // o preview estica; com ele na altura inteira (ou sem ele), a última das outras colunas ocupa a sobra
+  const others = cols.filter((c) => c !== 'preview');
+  const flex = cols.includes('preview') && tall !== 'preview' ? 'preview' : others[others.length - 1] || cols[0] || null;
+  const widths = cols.map((c) => {
+    if (c === flex) return tall === 'preview' ? `minmax(${MIN_COL}px, 1fr)` : 'minmax(0, 1fr)';
+    return `var(${WIDTH[c].v}, ${WIDTH[c].def})`;
   });
   const n = Math.max(1, cols.length);
   const line = (cells) => `'${cells.join(' ')}'`;
@@ -77,6 +90,8 @@ export function gridFor(l) {
     rows: rows.map((r) => r[0]).join(' '),
     areas: rows.map((r) => r[1]).join(' '),
     tall,
+    flex,
+    cols,
   };
 }
 
@@ -93,9 +108,13 @@ function apply() {
   body.classList.toggle('tall-preview', g.tall === 'preview');
   body.classList.toggle('pv-first', visible[0] === 'preview');
   body.style.removeProperty('--tl-h');
-  body.style.removeProperty('--pv-w');
   if (layout.tlH) body.style.setProperty('--tl-h', layout.tlH);
-  if (layout.pvW) body.style.setProperty('--pv-w', layout.pvW);
+  for (const w of Object.values(WIDTH)) {
+    body.style.removeProperty(w.v);
+    if (layout[w.key]) body.style.setProperty(w.v, layout[w.key]);
+  }
+  grid = g;
+  placeResizers();
   document.getElementById('panels-btn')?.classList.toggle('active', Object.keys(layout.hidden).length > 0);
 }
 
@@ -108,7 +127,7 @@ function update(patch) {
 
 export const getLayout = () => layout;
 export const setPanelHidden = (panel, hidden) => update({ hidden: { ...layout.hidden, [panel]: hidden } });
-export const applyPreset = (name) => PRESETS[name] && update({ ...PRESETS[name][1], hidden: {}, tlH: PRESETS[name][1].tlH || null, pvW: null });
+export const applyPreset = (name) => PRESETS[name] && update({ ...PRESETS[name][1], hidden: {}, tlH: PRESETS[name][1].tlH || null, pvW: null, mediaW: null, inspW: null });
 
 /** Move uma coluna uma posição para a esquerda (-1) ou para a direita (+1). */
 export function movePanel(panel, dir) {
@@ -125,8 +144,8 @@ export function initLayout() {
   // quem usava um dos layouts prontos da versão anterior continua com ele
   const old = saved ? null : load(OLD_KEY, null);
   layout = sanitizeLayout(saved || (PRESETS[old] ? PRESETS[old][1] : null));
+  initColumnResizers();
   apply();
-  initPreviewResizer();
   // na fase de captura: um clique dentro do menu refaz o conteúdo dele, e o elemento clicado deixa de existir
   document.addEventListener('click', (e) => {
     if (e.target.closest('[data-action="panels"]')) return toggleMenu();
@@ -145,32 +164,100 @@ export function initLayout() {
   });
 }
 
-/** Guarda as alturas/larguras ajustadas pelas alças (timeline e preview). */
+/** Guarda as alturas/larguras ajustadas pelas alças (timeline e colunas). */
 export function saveSizes() {
   const st = document.body.style;
-  layout = sanitizeLayout({ ...layout, tlH: st.getPropertyValue('--tl-h').trim() || null, pvW: st.getPropertyValue('--pv-w').trim() || null });
+  const patch = { tlH: st.getPropertyValue('--tl-h').trim() || null };
+  for (const w of Object.values(WIDTH)) patch[w.key] = st.getPropertyValue(w.v).trim() || null;
+  layout = sanitizeLayout({ ...layout, ...patch });
   store(KEY, layout);
 }
 
-function initPreviewResizer() {
-  const handle = document.getElementById('pv-resizer');
-  handle.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = handle.parentElement.getBoundingClientRect().width;
-    const dir = document.body.classList.contains('pv-first') ? 1 : -1;
-    const move = (ev) => {
-      const w = clamp(startW + dir * (ev.clientX - startX), 240, window.innerWidth - 520);
-      document.body.style.setProperty('--pv-w', Math.round(w) + 'px');
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      saveSizes();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  });
+// ---------------------------------------------------------------- alças de largura entre colunas
+let grid = null;
+let resizerLayer = null;
+
+/** Painel visível que representa a coluna agora (o de edição ou o do workspace de motion). */
+function columnEl(col) {
+  for (const sel of COLUMN_PANELS[col]) {
+    const el = document.querySelector(sel);
+    if (el && el.getClientRects().length) return el;
+  }
+  return null;
+}
+
+function initColumnResizers() {
+  resizerLayer = h('div.col-resizers');
+  document.body.append(resizerLayer);
+  const reposition = () => requestAnimationFrame(placeResizers);
+  window.addEventListener('resize', reposition);
+  // o tamanho dos painéis muda com a timeline, o modo (edição/motion) e os próprios arrastos
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(reposition);
+    for (const sels of Object.values(COLUMN_PANELS)) for (const sel of sels) { const el = document.querySelector(sel); if (el) ro.observe(el); }
+  }
+  subscribe((reason) => { if (reason === 'mode') reposition(); });
+}
+
+/** Uma alça em cada divisa entre colunas vizinhas, na faixa de altura que as duas compartilham. */
+function placeResizers() {
+  if (!resizerLayer || !grid) return;
+  const cols = grid.cols;
+  const handles = [];
+  for (let i = 0; i < cols.length - 1; i++) {
+    const a = columnEl(cols[i]);
+    const b = columnEl(cols[i + 1]);
+    if (!a || !b) continue;
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    // ao lado de uma coluna de altura inteira a divisa desce até o fim (passa também ao lado da timeline)
+    const tallRect = grid.tall === cols[i] ? ra : grid.tall === cols[i + 1] ? rb : null;
+    const top = tallRect ? tallRect.top : Math.max(ra.top, rb.top);
+    const bottom = tallRect ? tallRect.bottom : Math.min(ra.bottom, rb.bottom);
+    if (bottom - top < 10) continue;
+    const el = h('div.col-resizer', {
+      title: 'Arraste para mudar a largura · duplo clique volta ao padrão',
+      style: { left: Math.round(ra.right) - 3 + 'px', top: top + 'px', height: bottom - top + 'px' },
+    });
+    el.addEventListener('pointerdown', (e) => startColumnDrag(e, cols[i], cols[i + 1]));
+    el.addEventListener('dblclick', () => resetColumn(cols[i], cols[i + 1]));
+    handles.push(el);
+  }
+  resizerLayer.replaceChildren(...handles);
+}
+
+/** A divisa entre a e b muda a largura da coluna que não estica (a da esquerda, se as duas tiverem largura própria). */
+const resizedOf = (a, b) => (a !== grid.flex ? { col: a, dir: 1 } : { col: b, dir: -1 });
+
+function startColumnDrag(e, a, b) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const { col, dir } = resizedOf(a, b);
+  const el = columnEl(col);
+  const flexEl = grid.flex ? columnEl(grid.flex) : null;
+  if (!el) return;
+  const startX = e.clientX;
+  const startW = el.getBoundingClientRect().width;
+  // a coluna que estica não pode ficar estreita demais
+  const room = flexEl && grid.flex !== col ? flexEl.getBoundingClientRect().width - MIN_FLEX : Infinity;
+  document.body.classList.add('col-resizing');
+  const move = (ev) => {
+    const w = clamp(startW + dir * (ev.clientX - startX), MIN_COL, startW + Math.max(0, room));
+    document.body.style.setProperty(WIDTH[col].v, Math.round(w) + 'px');
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    document.body.classList.remove('col-resizing');
+    saveSizes();
+    placeResizers();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+function resetColumn(a, b) {
+  update({ [WIDTH[resizedOf(a, b).col].key]: null });
 }
 
 // ---------------------------------------------------------------- menu "Painéis"

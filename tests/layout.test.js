@@ -59,4 +59,18 @@ describe('arranjo dos painéis', () => {
     expect(s.pvW).toBe('300px');
     expect(s.hidden).toEqual({ insp: true });
   });
+
+  it('preview na altura inteira: as outras colunas têm largura ajustável e só a última estica', () => {
+    const g = gridFor(L(PRESETS['vertical-right'][1]));
+    expect(g.columns).toBe('var(--media-w, 260px) minmax(180px, 1fr) var(--pv-w, 34vw)');
+    expect(g.flex).toBe('insp');
+    expect(gridFor(L()).flex).toBe('preview');
+    expect(gridFor(L({ hidden: { preview: true } })).flex).toBe('insp');
+  });
+
+  it('larguras salvas das colunas são validadas', () => {
+    const s = sanitizeLayout({ mediaW: '320px', inspW: 'url(x)' });
+    expect(s.mediaW).toBe('320px');
+    expect(s.inspW).toBeNull();
+  });
 });

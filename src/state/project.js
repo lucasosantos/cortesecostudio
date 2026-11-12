@@ -19,7 +19,8 @@ export function newProject() {
 
 export const state = {
   project: newProject(),
-  selection: null, // id do clipe selecionado
+  selection: null, // id do clipe selecionado (o principal, mostrado no inspector)
+  multi: [], // seleção múltipla (Ctrl+clique); só vale enquanto contém state.selection
   time: 0,
   playing: false,
   zoom: 80, // pixels por segundo
@@ -102,6 +103,7 @@ export function resetHistory() {
 }
 function fixSelection() {
   if (state.selection && !getClip(state.selection)) state.selection = null;
+  state.multi = state.multi.filter((id) => getClip(id));
   // o workspace de motion pode estar apontando para algo que o desfazer removeu
   const m = state.motion;
   const comp = state.project.comps?.find((c) => c.id === m.compId) || null;
@@ -144,6 +146,15 @@ export function orderedTracks(project = state.project) {
 
 export function selectedClip() {
   return state.selection ? getClip(state.selection) : null;
+}
+
+/**
+ * Ids dos clipes selecionados. A seleção múltipla só vale enquanto inclui o clipe principal:
+ * qualquer código que selecione outro clipe com state.selection = id volta à seleção simples.
+ */
+export function selectedClipIds() {
+  if (!state.selection) return [];
+  return state.multi.length > 1 && state.multi.includes(state.selection) ? state.multi : [state.selection];
 }
 
 /** Tempo local (relativo ao clipe) do playhead, limitado à duração do clipe. */
@@ -393,8 +404,14 @@ export function findFreeSlot(trackId, t, d, ignoreId) {
 }
 
 // ---------- serialização ----------
+// dados extras gravados junto do projeto, fora do estado (ex.: fontes embutidas, que não devem pesar no desfazer)
+let fileExtras = () => ({});
+export function setFileExtras(fn) {
+  fileExtras = fn;
+}
+
 export function serializeProject() {
-  return JSON.stringify({ app: 'CorteSeco Studio', version: 1, project: state.project }, null, 2);
+  return JSON.stringify({ app: 'CorteSeco Studio', version: 1, project: state.project, ...fileExtras(state.project) }, null, 2);
 }
 
 export function loadProject(json) {
@@ -404,6 +421,7 @@ export function loadProject(json) {
   state.project.comps ||= []; // projetos salvos antes do módulo de motion
   state.maskEdit = null;
   state.selection = null;
+  state.multi = [];
   state.time = 0;
   state.mode = 'edit';
   state.motion = newMotionState();

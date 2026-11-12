@@ -3,6 +3,7 @@ import {
   state, emit, subscribe, checkpoint, getClip, getTrack, getMedia, orderedTracks, projectDuration,
   addTrack, removeTrack, moveTrack, overlaps, rippleRemove, rippleInsert, insertionTime, findFreeSlot,
   createClipFromMedia, createCompClip, trackKindFor, splitClip, removeClip, clipsOnTrack, snapshotKeyframes, restoreKeyframes,
+  selectedClipIds,
 } from '../state/project.js';
 import { getComp } from '../motion/model.js';
 import { openComp } from './motion/actions.js';
@@ -98,7 +99,7 @@ function toolbar() {
     h('button', { on: { click: () => { checkpoint(); addTrack('audio'); emit('project'); } } }, '+ Track de áudio'),
     h('div.sep'),
     h('button', { title: 'Dividir no playhead (S ou Ctrl+B)', on: { click: splitAtPlayhead } }, 'Dividir'),
-    h('button', { title: 'Excluir clipe (Delete)', on: { click: deleteSelected } }, 'Excluir'),
+    h('button', { title: 'Excluir clipe (Delete)', on: { click: () => deleteSelected() } }, 'Excluir'),
     h('div.sep'),
     insertBtn,
     snapBtn,
@@ -228,11 +229,13 @@ export function jumpToEdit(dir) {
 }
 
 export function deleteSelected(ripple = false) {
-  const clip = state.selection ? getClip(state.selection) : null;
-  if (!clip || getTrack(clip.trackId)?.locked) return;
+  const clips = selectedClipIds().map(getClip).filter((c) => c && !getTrack(c.trackId)?.locked);
+  if (!clips.length) return;
   checkpoint();
-  if (ripple) rippleRemove(clip);
-  removeClip(clip.id);
+  // o ripple (fechar o buraco) só faz sentido com um clipe
+  if (ripple && clips.length === 1) rippleRemove(clips[0]);
+  for (const c of clips) removeClip(c.id);
+  state.multi = [];
   emit('project');
 }
 
@@ -495,9 +498,10 @@ function clipEl(clip, track, tIndex) {
   const zoom = state.zoom;
   const media = getMedia(clip.mediaId);
   const rt = runtime.get(clip.mediaId);
-  const selected = clip.id === state.selection;
-  const isDragging = drag?.clip?.id === clip.id && drag.started;
-  const cls = `div.clip.type-${clip.type}${selected ? '.selected' : ''}${isDragging ? '.dragging' : ''}${isDragging && drag.invalid ? '.invalid' : ''}`;
+  const selected = clip.id === state.selection; // principal: mostra keyframes e envelope
+  const inSelection = selected || selectedClipIds().includes(clip.id);
+  const isDragging = drag?.started && (drag.clip?.id === clip.id || !!drag.group?.some((x) => x.clip.id === clip.id));
+  const cls = `div.clip.type-${clip.type}${inSelection ? '.selected' : ''}${isDragging ? '.dragging' : ''}${isDragging && drag.invalid ? '.invalid' : ''}`;
   const w = Math.max(2, clip.duration * zoom);
   const el = h(cls, { dataset: { clipId: clip.id }, style: { left: clip.start * zoom + 'px', width: w + 'px' } });
 
@@ -603,10 +607,12 @@ function rowAt(clientY) {
   return null;
 }
 
-function snapCandidates(ignoreId) {
+/** Pontos de encaixe do ímã. ignore: id ou Set de ids de clipes que não contam (os que estão sendo arrastados). */
+function snapCandidates(ignore) {
+  const skip = ignore instanceof Set ? ignore : new Set([ignore]);
   const c = [0, state.time];
   for (const clip of state.project.clips) {
-    if (clip.id === ignoreId) continue;
+    if (skip.has(clip.id)) continue;
     c.push(clip.start, clip.start + clip.duration);
   }
   return c;
@@ -660,7 +666,7 @@ function onPointerDown(e) {
   const clipNode = target.closest('.clip');
   if (!clipNode) {
     if (target.closest('.tl-lane')) {
-      if (state.selection) { state.selection = null; emit('selection'); }
+      if (state.selection || state.multi.length) { state.selection = null; state.multi = []; emit('selection'); }
       seek(Math.max(0, timeAt(e.clientX)));
     }
     return;
@@ -669,7 +675,17 @@ function onPointerDown(e) {
   const clip = getClip(clipNode.dataset.clipId);
   if (!clip) return;
   if (tool === 'blade') return bladeCut(e, clip);
-  if (state.selection !== clip.id) {
+  // Ctrl/Cmd+clique no corpo do clipe: adiciona/tira da seleção múltipla
+  // (nas alças, keyframes e envelope de volume o Ctrl mantém a função de cada um)
+  const onBody = !target.classList.contains('handle') && !target.classList.contains('kf') && !target.classList.contains('env-hit') && target.tagName !== 'circle';
+  if ((e.ctrlKey || e.metaKey) && onBody) {
+    if (!toggleInSelection(clip)) return; // tirou da seleção: nada para arrastar
+  } else if (!selectedClipIds().includes(clip.id)) {
+    state.selection = clip.id;
+    state.multi = [];
+    emit('selection');
+  } else if (state.selection !== clip.id) {
+    // clique num clipe do grupo: ele vira o principal e o grupo continua (para arrastar junto)
     state.selection = clip.id;
     emit('selection');
   }
@@ -703,7 +719,57 @@ function onPointerDown(e) {
     const t = Number(target.dataset.t);
     return beginDrag(e, { ...base, type: 'kf', current: t, from: t });
   }
-  beginDrag(e, { ...base, type: 'move', orig: { start: clip.start, trackId: clip.trackId } });
+  const group = selectedClipIds().map(getClip).filter((c) => c && !getTrack(c.trackId)?.locked);
+  beginDrag(e, {
+    ...base, type: 'move', orig: { start: clip.start, trackId: clip.trackId },
+    group: group.length > 1 && group.includes(clip) ? group.map((c) => ({ clip: c, start: c.start, trackId: c.trackId })) : null,
+  });
+}
+
+/** Ctrl+clique: alterna o clipe na seleção múltipla. @returns true se o clipe ficou selecionado */
+function toggleInSelection(clip) {
+  const ids = selectedClipIds();
+  const had = ids.includes(clip.id);
+  const next = had ? ids.filter((id) => id !== clip.id) : [...ids, clip.id];
+  state.selection = had ? next[next.length - 1] || null : clip.id;
+  state.multi = next.length > 1 ? next : [];
+  emit('selection');
+  return !had;
+}
+
+/** Arrasto de vários clipes: mesmo deslocamento no tempo e, se couber, nas tracks. */
+function moveGroup(e, dx) {
+  const g = drag.group;
+  const ids = new Set(g.map((x) => x.clip.id));
+  const lead = g.find((x) => x.clip === drag.clip) || g[0];
+  const minStart = Math.min(...g.map((x) => x.start));
+  let delta = Math.max(dx / state.zoom, -minStart);
+  // ímã pelas bordas do clipe sob o mouse
+  const cands = snapCandidates(ids);
+  const s1 = snap(lead.start + delta, cands);
+  const s2 = snap(lead.start + lead.clip.duration + delta, cands);
+  drag.snapAt = null;
+  if (s1.at != null) { delta = s1.value - lead.start; drag.snapAt = s1.at; }
+  else if (s2.at != null) { delta = s2.value - lead.clip.duration - lead.start; drag.snapAt = s2.at; }
+  delta = Math.max(delta, -minStart);
+  // tracks: desloca pelo mesmo número de linhas, se todas as linhas de destino servirem
+  const tracks = orderedTracks();
+  const row = rowAt(e.clientY);
+  const rowDelta = row ? tracks.findIndex((t) => t.id === row.id) - tracks.findIndex((t) => t.id === lead.trackId) : 0;
+  const targetOf = (x) => {
+    const t = tracks[tracks.findIndex((tr) => tr.id === x.trackId) + rowDelta];
+    return t && !t.locked && t.kind === trackKindFor(x.clip.type) ? t.id : null;
+  };
+  const shiftRows = rowDelta !== 0 && g.every((x) => targetOf(x));
+  for (const x of g) {
+    x.clip.start = x.start + delta;
+    x.clip.trackId = shiftRows ? targetOf(x) : x.trackId;
+  }
+  drag.insert = false;
+  drag.invalid = g.some((x) => state.project.clips.some((o) => !ids.has(o.id) && o.trackId === x.clip.trackId
+    && o.start < x.clip.start + x.clip.duration - 1e-6 && o.start + o.duration > x.clip.start + 1e-6));
+  fastMove = false;
+  emit('project');
 }
 
 /** Tempo do corte sob o mouse: encaixa no playhead e nas bordas com o ímã, e no quadro. */
@@ -761,6 +827,7 @@ function onPointerMove(e) {
   const clip = drag.clip;
   const zoom = state.zoom;
 
+  if (drag.type === 'move' && drag.group) return moveGroup(e, dx);
   if (drag.type === 'move') {
     let start = Math.max(0, drag.orig.start + dx / zoom);
     const cands = snapCandidates(clip.id);
@@ -834,7 +901,12 @@ function onPointerUp() {
   const d = drag;
   drag = null;
   if (!d || !d.started) return render();
-  if (d.type === 'move') {
+  if (d.type === 'move' && d.group) {
+    if (d.invalid) {
+      for (const x of d.group) { x.clip.start = x.start; x.clip.trackId = x.trackId; }
+      toast('Sobreposição: os clipes selecionados voltaram para o lugar');
+    }
+  } else if (d.type === 'move') {
     const clip = d.clip;
     if (d.insert) {
       const targetTrack = clip.trackId;
@@ -911,8 +983,14 @@ async function onDrop(e) {
   }
   const mediaId = e.dataTransfer.getData(MEDIA_MIME);
   let list = [];
+  let comps = [];
   if (mediaId) list = [getMedia(mediaId)].filter(Boolean);
-  else if (e.dataTransfer.files.length) list = await importFiles([...e.dataTransfer.files]);
+  else if (e.dataTransfer.files.length) {
+    const result = await importFiles([...e.dataTransfer.files]);
+    list = result.media;
+    comps = result.comps;
+    if (comps.length) import('./mediaPanel.js').then((m) => m.reportImport(result));
+  }
   let at = t;
   for (const media of list) {
     let trackId = target === 'new' ? null : target;
@@ -922,6 +1000,16 @@ async function onDrop(e) {
     }
     const clip = placeMedia(media, trackId, at);
     at = clip.start + clip.duration;
+  }
+  // SVGs e composições exportadas entram como clipes de composição
+  for (const comp of comps) {
+    let trackId = target === 'new' ? null : target;
+    if (target === 'new') {
+      checkpoint();
+      trackId = addTrack('visual').id;
+    }
+    const clip = placeComp(comp, trackId, at);
+    if (clip) at = clip.start + clip.duration;
   }
 }
 

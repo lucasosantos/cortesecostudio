@@ -19,16 +19,8 @@ import { placeComp } from '../timeline.js';
 import { h, clamp, toast } from '../util.js';
 import { fxKey, effectsSection, layerAnimSection } from '../fxPanel.js';
 import { textStyleRows, textAnimSection } from '../textStyle.js';
+import { fontPicker } from '../fontPicker.js';
 
-const FONTS = [
-  ['Inter, Arial, sans-serif', 'Sans (Inter/Arial)'],
-  ['Georgia, "Times New Roman", serif', 'Serif (Georgia)'],
-  ['"Courier New", monospace', 'Mono (Courier)'],
-  ['Impact, "Arial Black", sans-serif', 'Impact'],
-  ['"Comic Sans MS", cursive', 'Comic'],
-  ['Verdana, sans-serif', 'Verdana'],
-  ['"Trebuchet MS", sans-serif', 'Trebuchet'],
-];
 
 let root;
 let builtKey = null;
@@ -127,6 +119,7 @@ function compPanel(comp) {
       h('div.insp-actions', {},
         h('button.primary', { title: 'Coloca a composição na timeline do vídeo, no playhead', on: { click: () => addToTimeline(comp) } }, 'Usar na timeline'),
         h('button', { title: 'Cada forma do SVG vira uma camada animável', on: { click: () => importSvgDialog(comp) } }, 'Importar SVG…'),
+        h('button', { title: 'Salva a composição (.csmotion) para importar em outros projetos', on: { click: () => import('../mediaPanel.js').then((m) => m.exportCompDialog(comp)) } }, 'Exportar composição…'),
         h('button', {
           on: {
             click: () => {
@@ -448,8 +441,7 @@ function textSection(layer) {
     emit('project');
   };
   sec.append(h('textarea.text-input', { value: layer.text, on: { focus: beginEdit, blur: endEdit, input: (e) => restyle(() => { layer.text = e.target.value; }) } }));
-  sec.append(row('Fonte', h('select', { on: { change: (e) => { restyle(() => { f.family = e.target.value; }); endEdit(); } } },
-    ...FONTS.map(([v, n]) => h('option', { value: v, selected: v === f.family }, n)))));
+  sec.append(row('Fonte', fontPicker(() => f.family, (css) => { restyle(() => { f.family = css; }); endEdit(); }, { disabled: layer.locked })));
   sec.append(row('Tamanho', h('input', {
     type: 'number', min: 4, step: 1, value: f.size,
     on: { focus: beginEdit, blur: endEdit, input: (e) => Number(e.target.value) > 0 && restyle(() => { f.size = Number(e.target.value); }) },

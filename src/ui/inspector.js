@@ -1,7 +1,7 @@
 // Inspector: propriedades do clipe selecionado, keyframes por propriedade e opções de texto/áudio.
 import {
   state, emit, subscribe, checkpoint, selectedClip, getMedia, getTrack, localTime, measureText,
-  orderedTracks, overlaps, addTrack, uid, clipsOnTrack, projectDuration,
+  orderedTracks, overlaps, addTrack, uid, clipsOnTrack, projectDuration, selectedClipIds,
 } from '../state/project.js';
 import { valueAt, setProp, setKeyframe, removeKeyframe, keyframeAt, hasKeyframes, EASINGS, KF_PROPS } from '../state/keyframes.js';
 import { seek } from '../engine/player.js';
@@ -11,6 +11,7 @@ import { getComp } from '../motion/model.js';
 import { openComp } from './motion/actions.js';
 import { fxKey, effectsSection, masksSection, transitionParamRows } from './fxPanel.js';
 import { textStyleRows, textAnimSection } from './textStyle.js';
+import { fontPicker } from './fontPicker.js';
 import { transitionOptions, animOptions, transitionExtId, getExtension } from '../fx/registry.js';
 import { icon } from './icons.js';
 import { timed } from '../perf.js';
@@ -21,15 +22,6 @@ let bindings = [];
 let lastTimeRefresh = 0;
 let editing = false; // já criou checkpoint para a edição atual
 
-const FONTS = [
-  ['Inter, Arial, sans-serif', 'Sans (Inter/Arial)'],
-  ['Georgia, "Times New Roman", serif', 'Serif (Georgia)'],
-  ['"Courier New", monospace', 'Mono (Courier)'],
-  ['Impact, "Arial Black", sans-serif', 'Impact'],
-  ['"Comic Sans MS", cursive', 'Comic'],
-  ['Verdana, sans-serif', 'Verdana'],
-  ['"Trebuchet MS", sans-serif', 'Trebuchet'],
-];
 
 export function initInspector(el) {
   root = el;
@@ -55,7 +47,7 @@ function keyFor() {
   if (!clip) return 'none:' + JSON.stringify(state.project.settings);
   const media = getMedia(clip.mediaId);
   const comp = clip.type === 'comp' ? getComp(clip.compId) : null;
-  return `${clip.id}:${clip.type}:${!!media?.hasAudio}:${!!clip.audioDetached}:${comp ? `${comp.name}/${comp.width}x${comp.height}/${comp.duration}` : ''}:${fxKey(clip)}`;
+  return `${selectedClipIds().length}:${clip.id}:${clip.type}:${!!media?.hasAudio}:${!!clip.audioDetached}:${comp ? `${comp.name}/${comp.width}x${comp.height}/${comp.duration}` : ''}:${fxKey(clip)}`;
 }
 
 /** Cria checkpoint uma única vez por edição contínua (até o input perder o foco). */
@@ -73,7 +65,11 @@ function build() {
   builtKey = keyFor();
   bindings = [];
   const clip = selectedClip();
-  root.replaceChildren(...(clip ? clipPanel(clip) : projectPanel()));
+  const n = selectedClipIds().length;
+  const multiNote = n > 1
+    ? [h('div.insp-note.multi-note', {}, `${n} clipes selecionados — arraste qualquer um na timeline para mover todos juntos; Del exclui todos. Abaixo, o clipe clicado por último.`)]
+    : [];
+  root.replaceChildren(...multiNote, ...(clip ? clipPanel(clip) : projectPanel()));
   refresh();
 }
 
@@ -98,7 +94,7 @@ function projectPanel() {
     h('div.insp-note', {},
       h('kbd', {}, 'Espaço'), ' play · ', h('kbd', {}, 'S'), ' dividir · ', h('kbd', {}, 'Del'), ' excluir · ', h('kbd', {}, 'Shift+Del'), ' excluir e fechar buraco · ',
       h('kbd', {}, '←/→'), ' frame · ', h('kbd', {}, 'Ctrl+C/V'), ' copiar/colar · ', h('kbd', {}, 'Ctrl+Z'), ' desfazer · ', h('kbd', {}, 'Ctrl+roda'), ' zoom · ',
-      h('kbd', {}, 'Alt'), ' + arrastar clipe = reordenar empurrando os outros.',
+      h('kbd', {}, 'Alt'), ' + arrastar clipe = reordenar empurrando os outros · ', h('kbd', {}, 'Ctrl+clique'), ' seleciona vários clipes.',
     ),
     h('div.insp-note', {},
       h('kbd', {}, 'B'), ' ferramenta de corte · ', h('kbd', {}, 'A'), ' seleção · ', h('kbd', {}, 'Q'), '/', h('kbd', {}, 'W'), ' apagar antes/depois do playhead · ',
@@ -354,8 +350,7 @@ function textSection(clip) {
   };
   const ta = h('textarea.text-input', { value: clip.text, on: { focus: beginEdit, blur: endEdit, input: (e) => restyle(() => { clip.text = e.target.value; }) } });
   sec.append(ta);
-  const fontSel = h('select', { on: { change: (e) => { restyle(() => { f.family = e.target.value; }); endEdit(); } } },
-    ...FONTS.map(([v, n]) => h('option', { value: v, selected: v === f.family }, n)));
+  const fontSel = fontPicker(() => f.family, (css) => { restyle(() => { f.family = css; }); endEdit(); });
   sec.append(row('Fonte', fontSel));
   sec.append(row('Tamanho', h('input', { type: 'number', min: 4, step: 1, value: f.size, on: { focus: beginEdit, blur: endEdit, input: (e) => Number(e.target.value) > 0 && restyle(() => { f.size = Number(e.target.value); }) } })));
   sec.append(row('Cor', h('input', { type: 'color', value: f.color, on: { focus: beginEdit, blur: endEdit, input: (e) => { beginEdit(); f.color = e.target.value; emit('project'); } } }),
@@ -466,7 +461,7 @@ function effectSection(clip, key) {
   const dirRow = row('Direção', dir);
   const colorRow = row('Cor', color, presets);
   const note = h('div.insp-note');
-  sec.append(row('Tipo', type), durRow, dirRow, colorRow, ...extRows, missing, note);
+  sec.append(row('Tipo', type), durRow, dirRow, colorRow, ...extRows, missing || '', note);
 
   const adjacent = () => {
     const others = clipsOnTrack(clip.trackId).filter((c) => c.id !== clip.id);
